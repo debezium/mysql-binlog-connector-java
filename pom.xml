@@ -2,13 +2,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.zendesk</groupId>
+    <groupId>io.debezium</groupId>
     <artifactId>mysql-binlog-connector-java</artifactId>
     <version>0.30.0</version>
 
     <name>mysql-binlog-connector-java</name>
     <description>MySQL Binary Log connector</description>
-    <url>https://github.com/osheroff/mysql-binlog-connector-java</url>
+    <url>https://github.com/debezium/mysql-binlog-connector-java</url>
     <licenses>
         <license>
             <name>Apache License, Version 2.0</name>
@@ -17,9 +17,9 @@
         </license>
     </licenses>
     <scm>
-        <connection>scm:git:git@github.com:osheroff/mysql-binlog-connector-java.git</connection>
-        <developerConnection>scm:git:git@github.com:osheroff/mysql-binlog-connector-java.git</developerConnection>
-        <url>git@github.com:osheroff/mysql-binlog-connector-java.git</url>
+        <connection>scm:git:git@github.com:debezium/mysql-binlog-connector-java.git</connection>
+        <developerConnection>scm:git:git@github.com:debezium/mysql-binlog-connector-java.git</developerConnection>
+        <url>git@github.com:debeziun/mysql-binlog-connector-java.git</url>
     </scm>
     <developers>
         <developer>
@@ -38,6 +38,9 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <vagrant.bin>vagrant</vagrant.bin>
         <vagrant.integration.box>${basedir}/supplement/vagrant/mysql-5.7.15-sandbox-prepackaged</vagrant.integration.box>
+
+        <!-- Which Maven Central infra should be used -->
+        <release.endpoint>https://s01.oss.sonatype.org/</release.endpoint>
     </properties>
 
     <dependencies>
@@ -55,8 +58,8 @@
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>
-            <artifactId>mockito-all</artifactId>
-            <version>1.9.5</version>
+            <artifactId>mockito-core</artifactId>
+            <version>3.0.0</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -84,6 +87,45 @@
             <scope>compile</scope>
         </dependency>
     </dependencies>
+
+    <distributionManagement>
+      <repository>
+        <id>ossrh</id>
+        <name>Sonatype Staging Repository</name>
+        <url>${release.endpoint}/service/local/staging/deploy/maven2</url>
+      </repository>
+      <snapshotRepository>
+        <id>ossrh</id>
+        <name>OSS Sonatype Nexus Snapshots</name>
+        <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+      </snapshotRepository>
+    </distributionManagement>
+
+    <repositories>
+        <repository>
+            <id>confluent</id>
+            <name>Confluent</name>
+            <url>https://packages.confluent.io/maven/</url>
+            <snapshots>
+                <enabled>true</enabled>
+                <updatePolicy>never</updatePolicy>
+            </snapshots>
+        </repository>
+        <repository>
+            <id>ossrh</id>
+            <name>OSS Sonatype Nexus</name>
+            <url>${release.endpoint}/content/groups/public/</url>
+            <releases>
+                <enabled>true</enabled>
+                <updatePolicy>never</updatePolicy>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+                <updatePolicy>never</updatePolicy>
+            </snapshots>
+        </repository>
+    </repositories>
+
     <build>
         <plugins>
               <plugin>
@@ -93,7 +135,7 @@
                 <extensions>true</extensions>
                 <configuration>
                   <serverId>ossrh</serverId>
-                  <nexusUrl>https://oss.sonatype.org/</nexusUrl>
+                  <nexusUrl>${release.endpoint}</nexusUrl>
                   <autoReleaseAfterClose>true</autoReleaseAfterClose>
                   <stagingProgressTimeoutMinutes>10</stagingProgressTimeoutMinutes>
                   <keepStagingRepositoryOnCloseRuleFailure>true</keepStagingRepositoryOnCloseRuleFailure>
