@@ -37,6 +37,7 @@ public class TableMapEventMetadata implements EventData {
     private DefaultCharset enumAndSetDefaultCharset;
     private List<Integer> enumAndSetColumnCharsets;
     private BitSet visibility;
+    private List<Integer> vectorDimensionality;
 
     public BitSet getSignedness() {
         return signedness;
@@ -132,6 +133,14 @@ public class TableMapEventMetadata implements EventData {
 
     public void setVisibility(BitSet visibility) {
         this.visibility = visibility;
+    }
+
+    public List<Integer> getVectorDimensionality() {
+        return vectorDimensionality;
+    }
+
+    public void setVectorDimensionality(List<Integer> vectorDimensionality) {
+        this.vectorDimensionality = vectorDimensionality;
     }
 
     @Override

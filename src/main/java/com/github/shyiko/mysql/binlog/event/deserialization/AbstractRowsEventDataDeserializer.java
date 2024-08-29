@@ -197,6 +197,8 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
                 return deserializeGeometry(meta, inputStream);
             case JSON:
                 return deserializeJson(meta, inputStream);
+            case VECTOR:
+                return deserializeVector(meta, inputStream);
             default:
                 throw new IOException("Unsupported type " + type);
         }
@@ -401,6 +403,11 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
     protected Serializable deserializeBlob(int meta, ByteArrayInputStream inputStream) throws IOException {
         int blobLength = inputStream.readInteger(meta);
         return inputStream.read(blobLength);
+    }
+
+    protected Serializable deserializeVector(int meta, ByteArrayInputStream inputStream) throws IOException {
+        int vectorLength = inputStream.readInteger(meta);
+        return inputStream.read(vectorLength);
     }
 
     protected Serializable deserializeEnum(int length, ByteArrayInputStream inputStream) throws IOException {

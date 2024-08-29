@@ -4,7 +4,7 @@
 
     <groupId>io.debezium</groupId>
     <artifactId>mysql-binlog-connector-java</artifactId>
-    <version>0.30.0</version>
+    <version>0.31.0</version>
 
     <name>mysql-binlog-connector-java</name>
     <description>MySQL Binary Log connector</description>

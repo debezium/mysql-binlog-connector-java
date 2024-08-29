@@ -128,6 +128,9 @@ public class TableMapEventMetadataDeserializer {
                 case VISIBILITY:
                     result.setVisibility(readBooleanList(inputStream, nColumns));
                     break;
+                case VECTOR_DIMENSIONALITY:
+                    result.setVectorDimensionality(readIntegers(inputStream));
+                    break;
                 default:
                     inputStream.enterBlock(remainingBytes);
                     throw new IOException("Unsupported table metadata field type " + code);
@@ -212,6 +215,7 @@ public class TableMapEventMetadataDeserializer {
         ENUM_AND_SET_DEFAULT_CHARSET(10),   // Charsets of ENUM and SET columns
         ENUM_AND_SET_COLUMN_CHARSET(11),    // Charsets of ENUM and SET columns
         VISIBILITY(12),                     // Column visibility (8.0.23 and newer)
+        VECTOR_DIMENSIONALITY(13),          // Vector column dimensionality (9.0.0 and newer)
         UNKNOWN_METADATA_FIELD_TYPE(
             128);   // Returned with binlog-row-metadata=FULL from MySQL 8.0 in some cases
 
