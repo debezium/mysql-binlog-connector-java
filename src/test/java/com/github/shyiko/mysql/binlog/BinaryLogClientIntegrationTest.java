@@ -717,17 +717,17 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                 }
                 return eventHeader;
             }
-        }));
+        }), ex);
     }
 
     private void testCommunicationFailureInTheMiddleOfEventDataDeserialization(final IOException ex) throws Exception {
         EventDeserializer eventDeserializer = new EventDeserializer();
         eventDeserializer.setEventDataDeserializer(EventType.QUERY, new QueryEventFailureSimulator());
-        testCommunicationFailure(eventDeserializer);
+        testCommunicationFailure(eventDeserializer, ex);
     }
 
     @SuppressWarnings("deprecation")
-    protected void testCommunicationFailure(EventDeserializer eventDeserializer) throws Exception {
+    protected void testCommunicationFailure(EventDeserializer eventDeserializer, Exception exception) throws Exception {
         try {
             client.disconnect();
             final BinaryLogClient clientWithKeepAlive = new BinaryLogClient(slave.hostname, slave.port,
@@ -751,7 +751,7 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                 eventListener.waitFor(QueryEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
                 InOrder inOrder = inOrder(lifecycleListenerMock);
                 inOrder.verify(lifecycleListenerMock).onCommunicationFailure(eq(clientWithKeepAlive),
-                        any(EOFException.class));
+                        any(exception.getClass()));
                 inOrder.verify(lifecycleListenerMock).onDisconnect(eq(clientWithKeepAlive));
                 inOrder.verify(lifecycleListenerMock).onConnect(eq(clientWithKeepAlive));
                 verifyNoMoreInteractions(lifecycleListenerMock);
