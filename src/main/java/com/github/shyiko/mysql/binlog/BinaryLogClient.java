@@ -347,13 +347,13 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         if ( gtidStr == null )
             return;
 
-        this.gtidEnabled = true;
-
-        if (this.binlogFilename == null) {
-            this.binlogFilename = "";
-        }
-
         synchronized (gtidSetAccessLock) {
+            this.gtidEnabled = true;
+
+            if (this.binlogFilename == null) {
+                this.binlogFilename = "";
+            }
+
             if ( !gtidStr.equals("") ) {
                 if ( MariadbGtidSet.isMariaGtidSet(gtidStr) ) {
                     this.gtidSet = new MariadbGtidSet(gtidStr);
@@ -1000,10 +1000,10 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     }
 
     protected void setupGtidSet() throws IOException{
-        if (!this.gtidEnabled)
-            return;
-
         synchronized (gtidSetAccessLock) {
+            if (!this.gtidEnabled)
+                return;
+
             if ( this.databaseVersion.isMariaDb() ) {
                 if ( gtidSet == null ) {
                     gtidSet = new MariadbGtidSet("");
