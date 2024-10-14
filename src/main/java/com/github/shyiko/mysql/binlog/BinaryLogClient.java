@@ -348,6 +348,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             return;
 
         synchronized (gtidSetAccessLock) {
+            logger.info("Enabling GTID");
             this.gtidEnabled = true;
 
             if (this.binlogFilename == null) {
@@ -569,6 +570,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      * @throws IllegalStateException if binary log client is already connected
      */
     public void connect() throws IOException, IllegalStateException {
+        logger.fine("Trying to connect to " + hostname + ":" + port);
         if (!connectLock.tryLock()) {
             throw new IllegalStateException("BinaryLogClient is already connected");
         }
@@ -797,11 +799,13 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         Command dumpBinaryLogCommand;
         synchronized (gtidSetAccessLock) {
             if (this.gtidEnabled) {
+                logger.info("Requesting streaming from position filename: " + binlogFilename + ", position: " + binlogPosition + ", GTID set: " + gtidSet);
                 dumpBinaryLogCommand = new DumpBinaryLogGtidCommand(serverId,
                     useBinlogFilenamePositionInGtidMode ? binlogFilename : "",
                     useBinlogFilenamePositionInGtidMode ? binlogPosition : 4,
                     gtidSet);
             } else {
+                logger.info("Requesting streaming from position filename: " + binlogFilename + ", position: " + binlogPosition);
                 dumpBinaryLogCommand = new DumpBinaryLogCommand(serverId, binlogFilename, binlogPosition);
             }
         }
@@ -819,7 +823,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
         synchronized (gtidSetAccessLock) {
             if (this.gtidEnabled) {
-                logger.info(gtidSet.toString());
+                logger.info("Requesting streaming from GTID set: " + gtidSet);
                 channel.write(new QueryCommand("SET @slave_connect_state = '" + gtidSet.toString() + "'"));
                 checkError(channel.read());
                 channel.write(new QueryCommand("SET @slave_gtid_strict_mode = 0"));
@@ -828,6 +832,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 checkError(channel.read());
                 dumpBinaryLogCommand = new DumpBinaryLogCommand(serverId, "", 0L, isUseSendAnnotateRowsEvent());
             } else {
+                logger.info("Requesting streaming from position filename: " + binlogFilename + ", position: " + binlogPosition);
                 dumpBinaryLogCommand = new DumpBinaryLogCommand(serverId, binlogFilename, binlogPosition, isUseSendAnnotateRowsEvent());
             }
         }
@@ -1209,6 +1214,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private void commitGtid() {
         if (gtid != null) {
             synchronized (gtidSetAccessLock) {
+                logger.finest("Adding GTID " + gtid);
                 gtidSet.addGtid(gtid);
             }
         }
@@ -1320,6 +1326,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      * As the result following {@link #connect()} resumes client from where it left off.
      */
     public void disconnect() throws IOException {
+        logger.fine("Disconnecting from " + hostname + ":" + port);
         terminateKeepAliveThread();
         terminateConnect();
     }
