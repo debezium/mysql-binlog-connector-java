@@ -1193,6 +1193,9 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 MariadbGtidListEventData mariadbGtidListEventData = (MariadbGtidListEventData) EventDeserializer.EventDataWrapper.internal(event.getData());
                 gtid = mariadbGtidListEventData.getMariaGTIDSet().toString();
                 break;
+            case TRANSACTION_PAYLOAD:
+                commitGtid();
+                break;
             default:
         }
     }
