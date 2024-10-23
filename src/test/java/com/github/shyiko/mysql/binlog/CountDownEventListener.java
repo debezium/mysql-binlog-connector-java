@@ -18,6 +18,8 @@ package com.github.shyiko.mysql.binlog;
 import com.github.shyiko.mysql.binlog.event.Event;
 import com.github.shyiko.mysql.binlog.event.EventData;
 import com.github.shyiko.mysql.binlog.event.EventType;
+import com.github.shyiko.mysql.binlog.event.TransactionPayloadEventData;
+import com.github.shyiko.mysql.binlog.network.SSLMode;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -38,7 +40,16 @@ public class CountDownEventListener implements BinaryLogClient.EventListener {
         incrementCounter(getCounter(countersByType, event.getHeader().getEventType()));
         EventData data = event.getData();
         if (data != null) {
-            incrementCounter(getCounter(countersByDataClass, data.getClass()));
+            if (event.getHeader().getEventType() == EventType.TRANSACTION_PAYLOAD) {
+                for (Event uncompressedEvent : ((TransactionPayloadEventData) event.getData()).getUncompressedEvents()) {
+                    if (uncompressedEvent.getData() != null) {
+                        incrementCounter(getCounter(countersByDataClass, uncompressedEvent.getData().getClass()));
+                    }
+                }
+            }
+            else {
+                incrementCounter(getCounter(countersByDataClass, data.getClass()));
+            }
         }
     }
 
