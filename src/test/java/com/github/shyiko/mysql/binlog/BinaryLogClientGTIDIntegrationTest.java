@@ -65,6 +65,7 @@ public class BinaryLogClientGTIDIntegrationTest extends BinaryLogClientIntegrati
         master.execute("CREATE TABLE if not exists foo (i int)");
 
         String initialGTIDSet = getExecutedGtidSet(master);
+        assertNotNull("Initial GTID set is null", initialGTIDSet);
 
         EventDeserializer eventDeserializer = new EventDeserializer();
         try {
@@ -90,6 +91,7 @@ public class BinaryLogClientGTIDIntegrationTest extends BinaryLogClientIntegrati
                 eventListener.waitFor(XidEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
                 String gtidSet = clientWithKeepAlive.getGtidSet();
                 assertNotNull(gtidSet);
+                assertNotEquals(initialGTIDSet, gtidSet, "Initial GTID set and current GTID set are the same");
 
                 eventListener.reset();
 
@@ -102,14 +104,14 @@ public class BinaryLogClientGTIDIntegrationTest extends BinaryLogClientIntegrati
                 });
 
                 eventListener.waitFor(XidEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
-                assertNotEquals(client.getGtidSet(), gtidSet);
+                assertNotEquals(clientWithKeepAlive.getGtidSet(), gtidSet, "GTID set before and after INSERT operation are the same");
 
-                gtidSet = client.getGtidSet();
+                gtidSet = clientWithKeepAlive.getGtidSet();
 
                 eventListener.reset();
                 master.execute("DROP TABLE IF EXISTS test.bar");
                 eventListener.waitFor(QueryEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
-                assertNotEquals(clientWithKeepAlive.getGtidSet(), gtidSet);
+                assertNotEquals(clientWithKeepAlive.getGtidSet(), gtidSet, "GTID set before and after DROP TABLE operation are the same");
             } finally {
                 clientWithKeepAlive.disconnect();
             }
