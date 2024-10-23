@@ -17,6 +17,8 @@ package com.github.shyiko.mysql.binlog;
 
 import com.github.shyiko.mysql.binlog.event.Event;
 import com.github.shyiko.mysql.binlog.event.EventData;
+import com.github.shyiko.mysql.binlog.event.EventType;
+import com.github.shyiko.mysql.binlog.event.TransactionPayloadEventData;
 
 import java.util.ArrayList;
 import java.util.LinkedList;
@@ -32,7 +34,14 @@ public class CapturingEventListener extends CountDownEventListener {
     @Override
     public void onEvent(Event event) {
         synchronized (events) {
-            events.add(event);
+            if (event.getHeader().getEventType() == EventType.TRANSACTION_PAYLOAD) {
+                for (Event uncompressedEvent : ((TransactionPayloadEventData) event.getData()).getUncompressedEvents()) {
+                    events.add(uncompressedEvent);
+                }
+            }
+            else {
+                events.add(event);
+            }
             super.onEvent(event);
         }
     }
