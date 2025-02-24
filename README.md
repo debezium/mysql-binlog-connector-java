@@ -33,7 +33,7 @@ but ended up as a complete rewrite. Key differences/features:
 [noplay/python-mysql-replication](https://github.com/noplay/python-mysql-replication) (Python).
 
 
-Or get the latest JAR(s) from [here](https://search.maven.org/search?q=g:com.zendesk%20AND%20a:mysql-binlog-connector-java).
+Or get the latest JAR(s) from [here](https://mvnrepository.com/artifact/io.debezium/mysql-binlog-connector-java).
 
 #### Reading binary log file
 
