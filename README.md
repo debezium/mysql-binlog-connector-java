@@ -8,7 +8,7 @@ the "official" version of this.  With help from the Debezium devs.
 
 ```xml
 <dependency>
-    <groupId>com.zendesk</groupId>
+    <groupId>io.debezium</groupId>
     <artifactId>mysql-binlog-connector-java</artifactId>
     <version>0.25.0</version>
 </dependency>
