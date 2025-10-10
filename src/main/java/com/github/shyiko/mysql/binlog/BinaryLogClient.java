@@ -1362,17 +1362,31 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private void terminateConnect() throws IOException {
         terminateConnect(false);
     }
+
     private void terminateConnect(boolean force) throws IOException {
+        boolean lockAcquired = false;
         do {
+            // Check if thread has been interrupted (e.g., by shutdownNow())
+            if (Thread.currentThread().isInterrupted()) {
+                logger.fine("terminateConnect interrupted, exiting without acquiring lock");
+                break;
+            }
             disconnectChannel(force);
-        } while (!tryLockInterruptibly(connectLock, 1000, TimeUnit.MILLISECONDS));
-        connectLock.unlock();
+            lockAcquired = tryLockInterruptibly(connectLock, 1000, TimeUnit.MILLISECONDS);
+        } while (!lockAcquired);
+        
+        // Only unlock if we actually acquired the lock
+        if (lockAcquired) {
+            connectLock.unlock();
+        }
     }
 
     private static boolean tryLockInterruptibly(Lock lock, long time, TimeUnit unit) {
         try {
             return lock.tryLock(time, unit);
         } catch (InterruptedException e) {
+            // Restore interrupt status so calling code can detect it
+            Thread.currentThread().interrupt();
             return false;
         }
     }
