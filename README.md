@@ -11,7 +11,7 @@ the "official" version of this.  With help from the Debezium devs.
 <dependency>
     <groupId>io.debezium</groupId>
     <artifactId>mysql-binlog-connector-java</artifactId>
-    <version>0.40.2</version>
+    <version>0.40.3</version>
 </dependency>
 ```
 
