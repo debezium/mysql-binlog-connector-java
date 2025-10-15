@@ -4,7 +4,7 @@
 
     <groupId>io.debezium</groupId>
     <artifactId>mysql-binlog-connector-java</artifactId>
-    <version>0.40.2</version>
+    <version>0.40.3</version>
 
     <name>mysql-binlog-connector-java</name>
     <description>MySQL Binary Log connector</description>
@@ -39,8 +39,17 @@
         <vagrant.bin>vagrant</vagrant.bin>
         <vagrant.integration.box>${basedir}/supplement/vagrant/mysql-5.7.15-sandbox-prepackaged</vagrant.integration.box>
 
-        <!-- Which Maven Central infra should be used -->
-        <release.endpoint>https://s01.oss.sonatype.org/</release.endpoint>
+        <version.central.publishing.plugin>0.7.0</version.central.publishing.plugin>
+
+        <!-- Publishing -->
+        <publish.snapshot.url>https://central.sonatype.com/repository/maven-snapshots/</publish.snapshot.url>
+        <publish.auto>false</publish.auto>
+        <publish.skip>true</publish.skip>
+        <publish.wait.until>published</publish.wait.until>
+        <publish.wait.timeout>7200</publish.wait.timeout>
+        <publish.poll.interval>30</publish.poll.interval>
+        <!-- For credentials -->
+        <publish.repository.id>central</publish.repository.id>
     </properties>
 
     <dependencies>
@@ -128,19 +137,21 @@
 
     <build>
         <plugins>
-              <plugin>
-                <groupId>org.sonatype.plugins</groupId>
-                <artifactId>nexus-staging-maven-plugin</artifactId>
-                <version>1.7.0</version>
-                <extensions>true</extensions>
-                <configuration>
-                  <serverId>ossrh</serverId>
-                  <nexusUrl>${release.endpoint}</nexusUrl>
-                  <autoReleaseAfterClose>true</autoReleaseAfterClose>
-                  <stagingProgressTimeoutMinutes>10</stagingProgressTimeoutMinutes>
-                  <keepStagingRepositoryOnCloseRuleFailure>true</keepStagingRepositoryOnCloseRuleFailure>
-                </configuration>
-              </plugin>
+            <plugin>
+                  <groupId>org.sonatype.central</groupId>
+                  <artifactId>central-publishing-maven-plugin</artifactId>
+                  <version>${version.central.publishing.plugin}</version>
+                  <extensions>true</extensions>
+                  <configuration>
+                        <centralSnapshotsUrl>${publish.snapshot.url}</centralSnapshotsUrl>
+                        <publishingServerId>${publish.repository.id}</publishingServerId>
+                        <autoPublish>${publish.auto}</autoPublish>
+                        <skipPublishing>${publish.skip}</skipPublishing>
+                        <waitUntil>${publish.wait.until}</waitUntil>
+                        <waitMaxTime>${publish.wait.timeout}</waitMaxTime>
+                        <waitPollingInterval>${publish.poll.interval}</waitPollingInterval>
+                  </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
