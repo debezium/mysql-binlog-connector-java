@@ -43,6 +43,8 @@ public class AbstractRowsEventDataDeserializerTest {
             timestamp(1582, 10, 14, 0, 0, 0, 0));
         assetTimeEquals(UnixTime.from(1, 1, 1, 0, 0, 0, 0),
             timestamp(1, 1, 1, 0, 0, 0, 0));
+        assetTimeEquals(UnixTime.from(0000, 12, 30, 0, 0, 0, 0),
+            timestamp(0000, 12, 30, 0, 0, 0, 0));
     }
 
     private void assetTimeEquals(long actual, long expected) {
