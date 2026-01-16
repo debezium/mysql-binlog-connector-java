@@ -22,6 +22,8 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumSet;
 
 /**
  * @author <a href="mailto:somesh.malviya@booking.com">Somesh Malviya</a>
@@ -33,6 +35,12 @@ public class TransactionPayloadEventDataDeserializer implements EventDataDeseria
     public static final int OTW_PAYLOAD_SIZE_FIELD = 1;
     public static final int OTW_PAYLOAD_COMPRESSION_TYPE_FIELD = 2;
     public static final int OTW_PAYLOAD_UNCOMPRESSED_SIZE_FIELD = 3;
+
+    private static EnumSet<EventDeserializer.CompatibilityMode> compatibilitySet = EnumSet.noneOf(EventDeserializer.CompatibilityMode.class);
+
+    public void setCompatibilityModes(EnumSet<EventDeserializer.CompatibilityMode> compatibilityModes) {
+        this.compatibilitySet = compatibilityModes;
+    }
 
     @Override
     public TransactionPayloadEventData deserialize(ByteArrayInputStream inputStream) throws IOException {
@@ -91,6 +99,12 @@ public class TransactionPayloadEventDataDeserializer implements EventDataDeseria
     private static ArrayList<Event> getDecompressedEvents(TransactionPayloadEventData eventData) throws IOException {
         ArrayList<Event> decompressedEvents = new ArrayList<>();
         EventDeserializer transactionPayloadEventDeserializer = new EventDeserializer();
+        if (!compatibilitySet.isEmpty()) {
+            EventDeserializer.CompatibilityMode[] compatibilityModes = compatibilitySet.toArray(new EventDeserializer.CompatibilityMode[0]);
+            EventDeserializer.CompatibilityMode first = compatibilityModes[0];
+            EventDeserializer.CompatibilityMode[] rest = Arrays.copyOfRange(compatibilityModes, 1, compatibilityModes.length);
+            transactionPayloadEventDeserializer.setCompatibilityMode(first, rest);
+        }
 
         try (ZstdInputStream zstdInputStream = new ZstdInputStream(new java.io.ByteArrayInputStream(eventData.getPayload()))) {
             ByteArrayInputStream destinationInputStream = new ByteArrayInputStream(zstdInputStream);

@@ -27,7 +27,6 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 
 import java.io.IOException;
 import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
 
@@ -217,6 +216,11 @@ public class EventDeserializer {
             deserializer.setDeserializeIntegerAsByteArray(
                 compatibilitySet.contains(CompatibilityMode.INTEGER_AS_BYTE_ARRAY)
             );
+        }
+        if (eventDataDeserializer instanceof TransactionPayloadEventDataDeserializer) {
+            TransactionPayloadEventDataDeserializer deserializer =
+                (TransactionPayloadEventDataDeserializer) eventDataDeserializer;
+            deserializer.setCompatibilityModes(compatibilitySet);
         }
     }
 
