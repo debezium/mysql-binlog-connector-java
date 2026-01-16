@@ -36,7 +36,7 @@ public class TransactionPayloadEventDataDeserializer implements EventDataDeseria
     public static final int OTW_PAYLOAD_COMPRESSION_TYPE_FIELD = 2;
     public static final int OTW_PAYLOAD_UNCOMPRESSED_SIZE_FIELD = 3;
 
-    private static EnumSet<EventDeserializer.CompatibilityMode> compatibilitySet = EnumSet.noneOf(EventDeserializer.CompatibilityMode.class);
+    private EnumSet<EventDeserializer.CompatibilityMode> compatibilitySet = EnumSet.noneOf(EventDeserializer.CompatibilityMode.class);
 
     public void setCompatibilityModes(EnumSet<EventDeserializer.CompatibilityMode> compatibilityModes) {
         this.compatibilitySet = compatibilityModes;
@@ -96,7 +96,7 @@ public class TransactionPayloadEventDataDeserializer implements EventDataDeseria
         return eventData;
     }
 
-    private static ArrayList<Event> getDecompressedEvents(TransactionPayloadEventData eventData) throws IOException {
+    private ArrayList<Event> getDecompressedEvents(TransactionPayloadEventData eventData) throws IOException {
         ArrayList<Event> decompressedEvents = new ArrayList<>();
         EventDeserializer transactionPayloadEventDeserializer = new EventDeserializer();
         if (!compatibilitySet.isEmpty()) {
