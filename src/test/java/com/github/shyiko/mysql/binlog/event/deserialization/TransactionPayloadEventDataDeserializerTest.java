@@ -15,15 +15,20 @@
  */
 package com.github.shyiko.mysql.binlog.event.deserialization;
 
+import com.github.shyiko.mysql.binlog.event.Event;
+import com.github.shyiko.mysql.binlog.event.EventHeader;
+import com.github.shyiko.mysql.binlog.event.EventHeaderV4;
 import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.event.TransactionPayloadEventData;
-import com.github.shyiko.mysql.binlog.event.XAPrepareEventData;
+import com.github.shyiko.mysql.binlog.event.UpdateRowsEventData;
 import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 import org.testng.annotations.Test;
 
 import java.io.IOException;
+import java.io.Serializable;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.AssertJUnit.assertTrue;
 
 /**
  * @author <a href="mailto:somesh.malviya@booking.com">Somesh Malviya</a>
@@ -81,6 +86,7 @@ public class TransactionPayloadEventDataDeserializerTest {
               " after=[1, Once Upon a Time in the West, 1968, Italy, Western|Action, Claudia Cardinale|Charles Bronson|Henry Fonda|Gabriele Ferzetti|Frank Wolff|Al Mulock|Jason Robards|Woody Strode|Jack Elam|Lionel Stander|Paolo Stoppa|Keenan Wynn|Aldo Sambrell, Sergio Leone, Ennio Morricone, Sergio Leone|Sergio Donati|Dario Argento|Bernardo Bertolucci, Tonino Delli Colli, Paramount Pictures]}\n")
           .append("]}")
           .toString();
+    private static final byte[] UNCOMPRESSED_UPDATE_EVENT_BEFORE_ROW_0_BYTE_ARRAY = new byte[] {1, 0, 0, 0};
 
     @Test
     public void deserialize() throws IOException {
@@ -96,5 +102,61 @@ public class TransactionPayloadEventDataDeserializerTest {
           assertEquals(EventType.EXT_UPDATE_ROWS, transactionPayloadEventData.getUncompressedEvents().get(2).getHeader().getEventType());
           assertEquals(EventType.XID, transactionPayloadEventData.getUncompressedEvents().get(3).getHeader().getEventType());
           assertEquals(UNCOMPRESSED_UPDATE_EVENT, transactionPayloadEventData.getUncompressedEvents().get(2).getData().toString());
+    }
+
+    @Test
+    public void deserializePropagatingCompatibilityModeToTransactionPayloadEventDataDeserializer() throws IOException {
+
+        ByteArrayInputStream dataStream = new ByteArrayInputStream(DATA);
+
+        // Mock create target TransactionPayloadEventData DATA event header
+        final EventHeaderV4 eventHeader = new EventHeaderV4();
+        eventHeader.setEventType(EventType.TRANSACTION_PAYLOAD);
+        eventHeader.setEventLength(DATA.length + 19L);
+        eventHeader.setTimestamp(1646406641000L);
+        eventHeader.setServerId(223344);
+
+
+        EventHeaderDeserializer eventHeaderDeserializer = new EventHeaderDeserializer() {
+
+            private long count = 0L;
+
+            private EventHeaderDeserializer defaultEventHeaderDeserializer = new EventHeaderV4Deserializer();
+
+            @Override
+            public EventHeader deserialize(ByteArrayInputStream inputStream) throws IOException {
+                if (count > 0) {
+                    // uncompressed event header deserialize
+                    return defaultEventHeaderDeserializer.deserialize(inputStream);
+                }
+                count++;
+                // we need to return target TransactionPayloadEventData DATA event header we had mocked
+                return eventHeader;
+            }
+        };
+
+        EventDeserializer eventDeserializer = new EventDeserializer(eventHeaderDeserializer, new NullEventDataDeserializer());
+        eventDeserializer.setCompatibilityMode(EventDeserializer.CompatibilityMode.INTEGER_AS_BYTE_ARRAY);
+
+        Event event = eventDeserializer.nextEvent(dataStream);
+
+        assertTrue(event.getHeader().getEventType() == EventType.TRANSACTION_PAYLOAD);
+        assertTrue(event.getData() instanceof TransactionPayloadEventData);
+
+        TransactionPayloadEventData transactionPayloadEventData = event.getData();
+        assertEquals(COMPRESSION_TYPE, transactionPayloadEventData.getCompressionType());
+        assertEquals(PAYLOAD_SIZE, transactionPayloadEventData.getPayloadSize());
+        assertEquals(UNCOMPRESSED_SIZE, transactionPayloadEventData.getUncompressedSize());
+        assertEquals(NUMBER_OF_UNCOMPRESSED_EVENTS, transactionPayloadEventData.getUncompressedEvents().size());
+        assertEquals(EventType.QUERY, transactionPayloadEventData.getUncompressedEvents().get(0).getHeader().getEventType());
+        assertEquals(EventType.TABLE_MAP, transactionPayloadEventData.getUncompressedEvents().get(1).getHeader().getEventType());
+        assertEquals(EventType.EXT_UPDATE_ROWS, transactionPayloadEventData.getUncompressedEvents().get(2).getHeader().getEventType());
+        assertEquals(EventType.XID, transactionPayloadEventData.getUncompressedEvents().get(3).getHeader().getEventType());
+        assertTrue(transactionPayloadEventData.getUncompressedEvents().get(2).getData() instanceof UpdateRowsEventData);
+
+        UpdateRowsEventData updateRowsEventData = transactionPayloadEventData.getUncompressedEvents().get(2).getData();
+        assertEquals(1, updateRowsEventData.getRows().size());
+        Serializable[] updateBefore = updateRowsEventData.getRows().get(0).getKey();
+        assertEquals(UNCOMPRESSED_UPDATE_EVENT_BEFORE_ROW_0_BYTE_ARRAY, updateBefore[0]);
     }
 }

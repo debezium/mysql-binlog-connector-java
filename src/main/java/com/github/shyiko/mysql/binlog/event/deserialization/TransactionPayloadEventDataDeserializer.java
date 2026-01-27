@@ -22,6 +22,7 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.EnumSet;
 
 /**
  * @author <a href="mailto:somesh.malviya@booking.com">Somesh Malviya</a>
@@ -33,6 +34,12 @@ public class TransactionPayloadEventDataDeserializer implements EventDataDeseria
     public static final int OTW_PAYLOAD_SIZE_FIELD = 1;
     public static final int OTW_PAYLOAD_COMPRESSION_TYPE_FIELD = 2;
     public static final int OTW_PAYLOAD_UNCOMPRESSED_SIZE_FIELD = 3;
+
+    private EnumSet<EventDeserializer.CompatibilityMode> compatibilitySet = EnumSet.noneOf(EventDeserializer.CompatibilityMode.class);
+
+    public void setCompatibilityModes(EnumSet<EventDeserializer.CompatibilityMode> compatibilityModes) {
+        this.compatibilitySet = compatibilityModes;
+    }
 
     @Override
     public TransactionPayloadEventData deserialize(ByteArrayInputStream inputStream) throws IOException {
@@ -88,9 +95,12 @@ public class TransactionPayloadEventDataDeserializer implements EventDataDeseria
         return eventData;
     }
 
-    private static ArrayList<Event> getDecompressedEvents(TransactionPayloadEventData eventData) throws IOException {
+    private ArrayList<Event> getDecompressedEvents(TransactionPayloadEventData eventData) throws IOException {
         ArrayList<Event> decompressedEvents = new ArrayList<>();
         EventDeserializer transactionPayloadEventDeserializer = new EventDeserializer();
+        if (!compatibilitySet.isEmpty()) {
+            transactionPayloadEventDeserializer.setCompatibilityMode(compatibilitySet);
+        }
 
         try (ZstdInputStream zstdInputStream = new ZstdInputStream(new java.io.ByteArrayInputStream(eventData.getPayload()))) {
             ByteArrayInputStream destinationInputStream = new ByteArrayInputStream(zstdInputStream);
