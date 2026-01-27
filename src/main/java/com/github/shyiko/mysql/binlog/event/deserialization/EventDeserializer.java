@@ -182,6 +182,13 @@ public class EventDeserializer {
         }
     }
 
+    public void setCompatibilityMode(EnumSet<EventDeserializer.CompatibilityMode> compatibilityModes) {
+        this.compatibilitySet = compatibilityModes;
+        for (EventDataDeserializer eventDataDeserializer : eventDataDeserializers.values()) {
+            ensureCompatibility(eventDataDeserializer);
+        }
+    }
+
     private void ensureCompatibility(EventDataDeserializer eventDataDeserializer) {
         if (eventDataDeserializer instanceof AbstractRowsEventDataDeserializer) {
             AbstractRowsEventDataDeserializer deserializer =
