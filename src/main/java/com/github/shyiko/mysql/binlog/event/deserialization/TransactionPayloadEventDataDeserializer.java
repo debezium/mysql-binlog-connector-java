@@ -22,7 +22,6 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.EnumSet;
 
 /**
@@ -100,10 +99,7 @@ public class TransactionPayloadEventDataDeserializer implements EventDataDeseria
         ArrayList<Event> decompressedEvents = new ArrayList<>();
         EventDeserializer transactionPayloadEventDeserializer = new EventDeserializer();
         if (!compatibilitySet.isEmpty()) {
-            EventDeserializer.CompatibilityMode[] compatibilityModes = compatibilitySet.toArray(new EventDeserializer.CompatibilityMode[0]);
-            EventDeserializer.CompatibilityMode first = compatibilityModes[0];
-            EventDeserializer.CompatibilityMode[] rest = Arrays.copyOfRange(compatibilityModes, 1, compatibilityModes.length);
-            transactionPayloadEventDeserializer.setCompatibilityMode(first, rest);
+            transactionPayloadEventDeserializer.setCompatibilityMode(compatibilitySet);
         }
 
         try (ZstdInputStream zstdInputStream = new ZstdInputStream(new java.io.ByteArrayInputStream(eventData.getPayload()))) {
