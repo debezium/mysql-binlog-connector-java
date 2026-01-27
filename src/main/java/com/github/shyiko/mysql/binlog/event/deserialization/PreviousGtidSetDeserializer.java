@@ -27,13 +27,33 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
  */
 public class PreviousGtidSetDeserializer implements EventDataDeserializer<PreviousGtidSetEventData> {
 
+    public static final int TAGGED_GTID = 1;
+
     @Override
     public PreviousGtidSetEventData deserialize(
             ByteArrayInputStream inputStream) throws IOException {
-        int nUuids = inputStream.readInteger(8);
+        long nUuidsEncoded = inputStream.readLong(8);
+        long formatMask = 0xffL << 56;
+        long nUuidsMask = ~formatMask;
+        int formatEncoded = (int) ((nUuidsEncoded & formatMask) >> 56);
+        int nUuids = (int) (nUuidsEncoded & nUuidsMask);
+
+        if (formatEncoded == TAGGED_GTID) {
+            nUuidsMask = 0x00ffffffffffff00L;
+            nUuids = (int) ((nUuidsEncoded & nUuidsMask) >> 8);
+        }
         String[] gtids = new String[nUuids];
         for (int i = 0; i < nUuids; i++) {
             String uuid = formatUUID(inputStream.read(16));
+
+            if (formatEncoded==TAGGED_GTID) {
+                int len = inputStream.readInteger(1);
+                String tag = inputStream.readString(len >> 1);
+
+                if (!tag.isEmpty()) {
+                    uuid += ":" + tag;
+                }
+            }
 
             int nIntervals = inputStream.readInteger(8);
             String[] intervals = new String[nIntervals];
