@@ -8,12 +8,12 @@ import org.testng.annotations.Test;
  */
 public class BinaryLogClientBinlogCompressIntegrationTest extends BinaryLogClientGTIDIntegrationTest {
     @Override
-    protected MysqlOnetimeServerOptions getOptions() {
+    protected TestDatabaseContainerOptions getOptions() {
         if ( !this.mysqlVersion.atLeast(8,0) )  {
             throw new SkipException("skipping binlog compression on 5.x");
         }
 
-        MysqlOnetimeServerOptions options = new MysqlOnetimeServerOptions();
+        TestDatabaseContainerOptions options = new TestDatabaseContainerOptions();
         options.gtid = true;
         options.extraParams = "--binlog_transaction_compression=ON";
         return options;

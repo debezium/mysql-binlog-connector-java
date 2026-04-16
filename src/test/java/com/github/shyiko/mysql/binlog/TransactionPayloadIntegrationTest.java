@@ -23,8 +23,8 @@ import static org.testng.Assert.*;
 public class TransactionPayloadIntegrationTest extends AbstractIntegrationTest {
 
     @Override
-    protected MysqlOnetimeServerOptions getOptions() {
-        MysqlOnetimeServerOptions options = super.getOptions();
+    protected TestDatabaseContainerOptions getOptions() {
+        TestDatabaseContainerOptions options = super.getOptions();
         // Enable transaction compression (requires MySQL 8.0.20+)
         options.extraParams = "--binlog-transaction-compression=ON --binlog-transaction-compression-level-zstd=3";
         return options;

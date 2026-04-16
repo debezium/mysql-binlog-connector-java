@@ -14,6 +14,12 @@ import java.util.Map;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+/**
+ * @deprecated Use {@link TestDatabaseContainer} instead. This class relies on a custom onetimeserver
+ * script and will be removed in a future release. TestDatabaseContainer uses Testcontainers
+ * for better portability and supports both MySQL and MariaDB.
+ */
+@Deprecated
 public class MysqlOnetimeServer {
     private final MysqlOnetimeServerOptions options;
     public static int nextServerID = 1;

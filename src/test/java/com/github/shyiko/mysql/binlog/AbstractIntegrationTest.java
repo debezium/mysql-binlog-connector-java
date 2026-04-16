@@ -2,6 +2,8 @@ package com.github.shyiko.mysql.binlog;
 
 import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.event.deserialization.EventDeserializer;
+import org.testcontainers.containers.Network;
+import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 
 import java.sql.SQLException;
@@ -14,9 +16,12 @@ public abstract class AbstractIntegrationTest {
     protected BinaryLogClient client;
     protected CountDownEventListener eventListener;
     protected MysqlVersion mysqlVersion;
+    protected TestDatabaseContainer masterContainer;
+    protected TestDatabaseContainer slaveContainer;
+    protected Network network;
 
-    protected MysqlOnetimeServerOptions getOptions() {
-        MysqlOnetimeServerOptions options = new MysqlOnetimeServerOptions();
+    protected TestDatabaseContainerOptions getOptions() {
+        TestDatabaseContainerOptions options = new TestDatabaseContainerOptions();
         options.fullRowMetaData = true;
         return options;
     }
@@ -24,16 +29,31 @@ public abstract class AbstractIntegrationTest {
     @BeforeClass
     public void setUp() throws Exception {
         TimeZone.setDefault(TimeZone.getTimeZone("GMT"));
-        mysqlVersion = MysqlOnetimeServer.getVersion();
-        MysqlOnetimeServer masterServer = new MysqlOnetimeServer(getOptions());
-        MysqlOnetimeServer slaveServer = new MysqlOnetimeServer(getOptions());
+        mysqlVersion = TestDatabaseContainer.getVersion();
 
-        masterServer.boot();
-        slaveServer.boot();
-        slaveServer.setupSlave(masterServer.getPort());
+        // Create a shared network for master-slave communication
+        network = Network.newNetwork();
 
-        master = new MySQLConnection("127.0.0.1", masterServer.getPort(), "root", "");
-        slave = new MySQLConnection("127.0.0.1", slaveServer.getPort(), "root", "");
+        // Configure master with network and alias
+        TestDatabaseContainerOptions masterOptions = getOptions();
+        masterOptions.network = network;
+        masterOptions.networkAlias = "mysql-master";
+        masterOptions.serverID = 1;
+        masterContainer = new TestDatabaseContainer(masterOptions);
+
+        // Configure slave with same network but different server ID
+        TestDatabaseContainerOptions slaveOptions = getOptions();
+        slaveOptions.network = network;
+        slaveOptions.networkAlias = "mysql-slave";
+        slaveOptions.serverID = 2;  // Different server ID for slave
+        slaveContainer = new TestDatabaseContainer(slaveOptions);
+
+        masterContainer.start();
+        slaveContainer.start();
+        slaveContainer.setupSlave(masterContainer);
+
+        master = new MySQLConnection(masterContainer.getHost(), masterContainer.getPort(), "root", "");
+        slave = new MySQLConnection(slaveContainer.getHost(), slaveContainer.getPort(), "root", "");
 
         client = new BinaryLogClient(slave.hostname, slave.port, slave.username, slave.password);
         EventDeserializer eventDeserializer = new EventDeserializer();
@@ -54,11 +74,25 @@ public abstract class AbstractIntegrationTest {
                 statement.execute("use mbcj_test");
             }
         });
+        // Wait for slave to replicate the commands from master
+        slaveContainer.waitForSlaveToBeCurrent(masterContainer);
         eventListener.waitFor(EventType.QUERY, 2, BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
 
         if ( mysqlVersion.atLeast(8, 0) ) {
             setupMysql8Login(master);
+            // Wait for slave to replicate the MySQL 8 login setup
+            slaveContainer.waitForSlaveToBeCurrent(masterContainer);
             eventListener.waitFor(EventType.QUERY, 2, BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
+        }
+    }
+
+    @AfterClass(alwaysRun = true)
+    public void tearDownContainers() throws Exception {
+        if (slaveContainer != null) {
+            slaveContainer.stop();
+        }
+        if (masterContainer != null) {
+            masterContainer.stop();
         }
     }
 

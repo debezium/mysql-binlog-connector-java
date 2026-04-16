@@ -20,7 +20,7 @@ import com.github.shyiko.mysql.binlog.BinaryLogClientIntegrationTest;
 import com.github.shyiko.mysql.binlog.CapturingEventListener;
 import com.github.shyiko.mysql.binlog.CountDownEventListener;
 import com.github.shyiko.mysql.binlog.MySQLConnection;
-import com.github.shyiko.mysql.binlog.MysqlOnetimeServer;
+import com.github.shyiko.mysql.binlog.TestDatabaseContainer;
 import com.github.shyiko.mysql.binlog.TraceEventListener;
 import com.github.shyiko.mysql.binlog.TraceLifecycleListener;
 import com.github.shyiko.mysql.binlog.event.EventData;
@@ -71,14 +71,16 @@ public class JsonBinaryValueIntegrationTest {
 
     private boolean isMaria = "mariadb".equals(System.getenv("MYSQL_VERSION"));
 
+    private TestDatabaseContainer masterContainer;
+
     @BeforeClass
     public void setUp() throws Exception {
         TimeZone.setDefault(TimeZone.getTimeZone("GMT"));
 
-        MysqlOnetimeServer masterServer = new MysqlOnetimeServer();
-        masterServer.boot();
+        masterContainer = new TestDatabaseContainer();
+        masterContainer.start();
 
-        master = new MySQLConnection("127.0.0.1", masterServer.getPort(), "root", "");
+        master = new MySQLConnection(masterContainer.getHost(), masterContainer.getPort(), "root", "");
 
         client = new BinaryLogClient(master.hostname(), master.port(), master.username(), master.password());
         client.setServerId(client.getServerId() - 1); // avoid clashes between BinaryLogClient instances
@@ -609,6 +611,9 @@ public class JsonBinaryValueIntegrationTest {
                     }
                 });
                 master.close();
+            }
+            if (masterContainer != null) {
+                masterContainer.stop();
             }
         }
     }

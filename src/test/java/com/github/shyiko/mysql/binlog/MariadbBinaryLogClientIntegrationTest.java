@@ -20,8 +20,8 @@ import static org.testng.AssertJUnit.assertNotNull;
  */
 public class MariadbBinaryLogClientIntegrationTest extends AbstractIntegrationTest {
     @Override
-    protected MysqlOnetimeServerOptions getOptions() {
-        MysqlOnetimeServerOptions options = super.getOptions();
+    protected TestDatabaseContainerOptions getOptions() {
+        TestDatabaseContainerOptions options = super.getOptions();
         if ( !mysqlVersion.isMaria )
             return options;
 

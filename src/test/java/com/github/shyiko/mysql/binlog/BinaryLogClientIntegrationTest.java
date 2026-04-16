@@ -1016,19 +1016,19 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
         if ( !mysqlVersion.atLeast(8, 0) )
             throw new SkipException("skipping mysql8 auth test");
 
-        MysqlOnetimeServerOptions opts = new MysqlOnetimeServerOptions();
+        TestDatabaseContainerOptions opts = new TestDatabaseContainerOptions();
         opts.extraParams = "--default-authentication-plugin=caching_sha2_password";
-        MysqlOnetimeServer server = new MysqlOnetimeServer(opts);
-        server.boot();
+        TestDatabaseContainer server = new TestDatabaseContainer(opts);
+        server.start();
 
-        MySQLConnection cx = new MySQLConnection("127.0.0.1", server.getPort(), "root", "");
+        MySQLConnection cx = new MySQLConnection(server.getHost(), server.getPort(), "root", "");
 
         setupMysql8Login(cx);
         BinaryLogClient c = new BinaryLogClient(cx.hostname, cx.port, "mysql8", "testpass");
         c.setSSLMode(SSLMode.PREFERRED);
         c.connect(DEFAULT_TIMEOUT);
 
-        server.shutDown();
+        server.stop();
     }
 
     @Test
@@ -1077,10 +1077,10 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
 
     @Test(timeOut = 120000)
     public void testNetWriteTimeoutCausesEOF() throws Exception {
-        MysqlOnetimeServer server = new MysqlOnetimeServer();
-        server.boot();
+        TestDatabaseContainer server = new TestDatabaseContainer();
+        server.start();
 
-        MySQLConnection conn = new MySQLConnection("127.0.0.1", server.getPort(), "root", "");
+        MySQLConnection conn = new MySQLConnection(server.getHost(), server.getPort(), "root", "");
 
         try {
             conn.execute((Callback<Statement>) statement -> {
@@ -1137,11 +1137,11 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
             logger.info("BinaryLogClient connected, inserting data...");
 
             // Insert large data in a background thread
-            final MysqlOnetimeServer finalServer = server;
+            final TestDatabaseContainer finalServer = server;
             final AtomicReference<Exception> dataThreadError = new AtomicReference<>();
             Thread dataThread = new Thread(() -> {
                 try {
-                    MySQLConnection dataConn = new MySQLConnection("127.0.0.1", finalServer.getPort(), "root", "");
+                    MySQLConnection dataConn = new MySQLConnection(finalServer.getHost(), finalServer.getPort(), "root", "");
                     dataConn.connection.setAutoCommit(true); // ensure each INSERT is committed immediately
                     Statement stmt = dataConn.connection.createStatement();
                     stmt.execute("USE net_timeout_test");
@@ -1187,17 +1187,17 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
             dataThread.join(5000);
         } finally {
             conn.close();
-            server.shutDown();
+            server.stop();
         }
     }
 
     @Test(timeOut = 120000)
     public void testNetWriteTimeoutLargeValueWorksNormally() throws Exception {
         // Boot a standalone MySQL instance
-        MysqlOnetimeServer server = new MysqlOnetimeServer();
-        server.boot();
+        TestDatabaseContainer server = new TestDatabaseContainer();
+        server.start();
 
-        MySQLConnection conn = new MySQLConnection("127.0.0.1", server.getPort(), "root", "");
+        MySQLConnection conn = new MySQLConnection(server.getHost(), server.getPort(), "root", "");
 
         try {
             // Set global net_write_timeout=1 (same harsh condition as testNetWriteTimeoutCausesEOF)
@@ -1259,10 +1259,10 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
 
             try {
                 // Insert large data in background (same pressure as testNetWriteTimeoutCausesEOF)
-                final MysqlOnetimeServer finalServer = server;
+                final TestDatabaseContainer finalServer = server;
                 Thread dataThread = new Thread(() -> {
                     try {
-                        MySQLConnection dataConn = new MySQLConnection("127.0.0.1", finalServer.getPort(), "root", "");
+                        MySQLConnection dataConn = new MySQLConnection(finalServer.getHost(), finalServer.getPort(), "root", "");
                         dataConn.connection.setAutoCommit(true);
                         Statement stmt = dataConn.connection.createStatement();
                         stmt.execute("USE net_timeout_test2");
@@ -1312,17 +1312,17 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                 conn.execute((Callback<Statement>) statement -> statement.execute("SET GLOBAL net_write_timeout=60"));
             } catch (Exception ignored) {}
             conn.close();
-            server.shutDown();
+            server.stop();
         }
     }
 
     @Test(timeOut = 60000)
     public void testNetReadTimeoutApplied() throws Exception {
         // Boot a standalone MySQL instance
-        MysqlOnetimeServer server = new MysqlOnetimeServer();
-        server.boot();
+        TestDatabaseContainer server = new TestDatabaseContainer();
+        server.start();
 
-        MySQLConnection conn = new MySQLConnection("127.0.0.1", server.getPort(), "root", "");
+        MySQLConnection conn = new MySQLConnection(server.getHost(), server.getPort(), "root", "");
 
         try {
             // Set global net_read_timeout=1
@@ -1364,7 +1364,7 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                 conn.execute((Callback<Statement>) statement -> statement.execute("SET GLOBAL net_read_timeout=30"));
             } catch (Exception ignored) {}
             conn.close();
-            server.shutDown();
+            server.stop();
         }
     }
 
