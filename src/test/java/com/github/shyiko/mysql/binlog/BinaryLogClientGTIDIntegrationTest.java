@@ -34,12 +34,12 @@ import static org.testng.AssertJUnit.assertNotNull;
  */
 public class BinaryLogClientGTIDIntegrationTest extends BinaryLogClientIntegrationTest {
     @Override
-    protected MysqlOnetimeServerOptions getOptions() {
+    protected TestDatabaseContainerOptions getOptions() {
         if ( !this.mysqlVersion.atLeast(5,7) )  {
             throw new SkipException("skipping gtid on 5.5");
         }
 
-        MysqlOnetimeServerOptions options = new MysqlOnetimeServerOptions();
+        TestDatabaseContainerOptions options = new TestDatabaseContainerOptions();
         options.gtid = true;
         return options;
     }
@@ -88,7 +88,12 @@ public class BinaryLogClientGTIDIntegrationTest extends BinaryLogClientIntegrati
                     }
                 });
 
-                eventListener.waitFor(XidEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
+                // Wait for GTID to advance instead of counting events to avoid race conditions in CI
+                final String initialGtid = initialGTIDSet;
+                org.awaitility.Awaitility.await()
+                    .atMost(4, TimeUnit.SECONDS)
+                    .pollInterval(100, TimeUnit.MILLISECONDS)
+                    .until(() -> !initialGtid.equals(clientWithKeepAlive.getGtidSet()));
                 String gtidSet = clientWithKeepAlive.getGtidSet();
                 assertNotNull(gtidSet);
                 assertNotEquals(initialGTIDSet, gtidSet, "Initial GTID set and current GTID set are the same");
@@ -103,15 +108,26 @@ public class BinaryLogClientGTIDIntegrationTest extends BinaryLogClientIntegrati
                     }
                 });
 
-                eventListener.waitFor(XidEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
+                // Wait for GTID to advance instead of counting events
+                final String gtidAfterFirst = gtidSet;
+                org.awaitility.Awaitility.await()
+                    .atMost(4, TimeUnit.SECONDS)
+                    .pollInterval(100, TimeUnit.MILLISECONDS)
+                    .until(() -> !gtidAfterFirst.equals(clientWithKeepAlive.getGtidSet()));
                 assertNotEquals(clientWithKeepAlive.getGtidSet(), gtidSet, "GTID set before and after INSERT operation are the same");
 
                 gtidSet = clientWithKeepAlive.getGtidSet();
 
                 eventListener.reset();
+                final String gtidBeforeDrop = clientWithKeepAlive.getGtidSet();
                 master.execute("DROP TABLE IF EXISTS test.bar");
-                eventListener.waitFor(QueryEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
-                assertNotEquals(clientWithKeepAlive.getGtidSet(), gtidSet, "GTID set before and after DROP TABLE operation are the same");
+                // Use Awaitility to poll for GTID advancement instead of counting events
+                // This avoids race conditions and works for both row-based and statement-based modes
+                org.awaitility.Awaitility.await()
+                    .atMost(4, TimeUnit.SECONDS)
+                    .pollInterval(100, TimeUnit.MILLISECONDS)
+                    .until(() -> !gtidBeforeDrop.equals(clientWithKeepAlive.getGtidSet()));
+                assertNotEquals(clientWithKeepAlive.getGtidSet(), gtidBeforeDrop, "GTID set before and after DROP TABLE operation are the same");
             } finally {
                 clientWithKeepAlive.disconnect();
             }
