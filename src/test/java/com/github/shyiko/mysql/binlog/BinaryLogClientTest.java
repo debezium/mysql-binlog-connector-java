@@ -15,10 +15,9 @@
  */
 package com.github.shyiko.mysql.binlog;
 
-import com.github.shyiko.mysql.binlog.event.MariadbGtidSet;
-import com.github.shyiko.mysql.binlog.jmx.BinaryLogClientStatistics;
-import com.github.shyiko.mysql.binlog.network.SocketFactory;
-import org.testng.annotations.Test;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertTrue;
 
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -33,9 +32,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertTrue;
+import org.testng.annotations.Test;
+
+import com.github.shyiko.mysql.binlog.jmx.BinaryLogClientStatistics;
+import com.github.shyiko.mysql.binlog.network.SocketFactory;
 
 /**
  * @author <a href="mailto:stanley.shyiko@gmail.com">Stanley Shyiko</a>
