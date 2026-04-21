@@ -45,7 +45,10 @@ public class TestDatabaseContainer {
      * Creates a new test database container with specific options.
      */
     public TestDatabaseContainer(TestDatabaseContainerOptions options) {
+        // Use version from options first, then fall back to system property
         String version = options.version != null ? options.version : getImageFromSystemProperty();
+
+        logger.info("Using database image: " + version);
 
         // Parse image name (e.g., "mysql:8.0" or "mariadb:10.6")
         if (version.toLowerCase().contains("mariadb")) {
