@@ -22,6 +22,13 @@ public class MariadbBinaryLogClientIntegrationTest extends AbstractIntegrationTe
     @Override
     protected TestDatabaseContainerOptions getOptions() {
         TestDatabaseContainerOptions options = super.getOptions();
+
+        // Force MariaDB image when this test is run
+        String mariadbImage = System.getProperty("mysql.image");
+        if (mariadbImage != null && mariadbImage.toLowerCase().contains("mariadb")) {
+            options.version = mariadbImage;
+        }
+
         if ( !mysqlVersion.isMaria )
             return options;
 

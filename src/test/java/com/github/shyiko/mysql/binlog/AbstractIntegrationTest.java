@@ -23,6 +23,11 @@ public abstract class AbstractIntegrationTest {
     protected TestDatabaseContainerOptions getOptions() {
         TestDatabaseContainerOptions options = new TestDatabaseContainerOptions();
         options.fullRowMetaData = true;
+        // Set version from system property if available
+        String imageFromProperty = System.getProperty("mysql.image");
+        if (imageFromProperty != null) {
+            options.version = imageFromProperty;
+        }
         return options;
     }
 
@@ -76,7 +81,11 @@ public abstract class AbstractIntegrationTest {
         });
         // Wait for slave to replicate the commands from master
         slaveContainer.waitForSlaveToBeCurrent(masterContainer);
-        eventListener.waitFor(EventType.QUERY, 2, BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
+
+        // MariaDB doesn't always generate QUERY events for DDL in the same way as MySQL
+        if (!mysqlVersion.isMaria) {
+            eventListener.waitFor(EventType.QUERY, 2, BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
+        }
 
         if ( mysqlVersion.atLeast(8, 0) ) {
             setupMysql8Login(master);

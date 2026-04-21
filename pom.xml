@@ -228,6 +228,9 @@
                     <excludes>
                         <exclude>**/*IntegrationTest.java</exclude>
                     </excludes>
+                    <systemPropertyVariables>
+                        <mysql.image>${mysql.image}</mysql.image>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             <plugin>
