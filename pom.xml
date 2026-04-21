@@ -306,6 +306,18 @@
                 </dependency>
             </dependencies>
         </profile>
+        <profile>
+            <id>mysql-8.0</id>
+            <properties>
+                <mysql.image>container-registry.oracle.com/mysql/community-server:8.0</mysql.image>
+            </properties>
+        </profile>
+        <profile>
+            <id>mariadb</id>
+            <properties>
+                <mysql.image>mirror.gcr.io/library/mariadb:10.6</mysql.image>
+            </properties>
+        </profile>
     </profiles>
 
 </project>

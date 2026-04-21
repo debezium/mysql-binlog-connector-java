@@ -33,9 +33,9 @@ public class TestDatabaseContainer {
     }
 
     /**
-     * Creates a new test database container based on the MYSQL_VERSION environment variable.
-     * Defaults to MySQL 5.7 if not specified.
-     * Use "mariadb" for MariaDB, or specific versions like "8.0", "5.7", etc.
+     * Creates a new test database container based on the mysql.image system property.
+     * Defaults to MySQL 8.0 if not specified.
+     * Use Maven profiles: -Pmysql-8.0 or -Pmariadb
      */
     public TestDatabaseContainer() {
         this(new TestDatabaseContainerOptions());
@@ -45,18 +45,20 @@ public class TestDatabaseContainer {
      * Creates a new test database container with specific options.
      */
     public TestDatabaseContainer(TestDatabaseContainerOptions options) {
-        String version = options.version != null ? options.version : getVersionFromEnvironment();
+        String version = options.version != null ? options.version : getImageFromSystemProperty();
 
-        if (version.toLowerCase().startsWith("mariadb")) {
+        // Parse image name (e.g., "mysql:8.0" or "mariadb:10.6")
+        if (version.toLowerCase().contains("mariadb")) {
             this.databaseType = DatabaseType.MARIADB;
-            String mariadbVersion = version.equalsIgnoreCase("mariadb") ? "10.6" : version.substring(7);
-            this.container = new MariaDBContainer<>(DockerImageName.parse("mariadb:" + mariadbVersion))
+            DockerImageName imageName = DockerImageName.parse(version).asCompatibleSubstituteFor("mariadb");
+            this.container = new MariaDBContainer<>(imageName)
                     .withDatabaseName("mysql")
                     .withUsername("root")
                     .withPassword("");
         } else {
             this.databaseType = DatabaseType.MYSQL;
-            this.container = new MySQLContainer<>(DockerImageName.parse("mysql:" + version))
+            DockerImageName imageName = DockerImageName.parse(version).asCompatibleSubstituteFor("mysql");
+            this.container = new MySQLContainer<>(imageName)
                     .withDatabaseName("mysql")
                     .withUsername("root")
                     .withPassword("")
@@ -108,15 +110,23 @@ public class TestDatabaseContainer {
         container.withCommand(commands.toArray(new String[0]));
     }
 
-    private static String getVersionFromEnvironment() {
-        String mysqlVersion = System.getenv("MYSQL_VERSION");
-        return mysqlVersion == null ? "5.7" : mysqlVersion;
+    private static String getImageFromSystemProperty() {
+        String mysqlImage = System.getProperty("mysql.image");
+        return mysqlImage == null ? "mysql:8.0" : mysqlImage;
     }
 
-    private static MysqlVersion parseVersion(String version) {
-        if (version.toLowerCase().startsWith("mariadb")) {
+    private static MysqlVersion parseVersion(String imageTag) {
+        if (imageTag.toLowerCase().contains("mariadb")) {
             return new MysqlVersion(0, 0, true);
         } else {
+            // Extract version from image tag, handling registry prefixes
+            // e.g., "container-registry.oracle.com/mysql/community-server:8.0" -> "8.0"
+            // or "mysql:8.0" -> "8.0"
+            String version = "8.0"; // default
+            if (imageTag.contains(":")) {
+                // Get the part after the last colon (the version tag)
+                version = imageTag.substring(imageTag.lastIndexOf(':') + 1);
+            }
             String[] parts = version.split("\\.");
             return new MysqlVersion(Integer.valueOf(parts[0]), Integer.valueOf(parts[1]), false);
         }
@@ -269,8 +279,8 @@ public class TestDatabaseContainer {
      * Gets the MySQL version information.
      */
     public static MysqlVersion getVersion() {
-        String version = getVersionFromEnvironment();
-        return parseVersion(version);
+        String imageTag = getImageFromSystemProperty();
+        return parseVersion(imageTag);
     }
 
     /**
