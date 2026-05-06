@@ -209,6 +209,17 @@ public enum EventType {
     TRANSACTION_PAYLOAD(40),
 
     /**
+     * Heartbeat event version 2.
+     */
+    HEARTBEAT_V2(41),
+
+    /**
+     * Global Transaction Identifier with tag support (MySQL 8.3+).
+     * Similar to GTID but includes an optional tag field for organizational purposes.
+     */
+    GTID_TAGGED(42),
+
+    /**
      * MariaDB Support Events
      *
      * @see <a href="https://mariadb.com/kb/en/replication-protocol/">Replication Protocol</a> for the original doc.

@@ -69,7 +69,7 @@ public class JsonBinaryValueIntegrationTest {
     private BinaryLogClient client;
     private CountDownEventListener eventListener;
 
-    private boolean isMaria = "mariadb".equals(System.getenv("MYSQL_VERSION"));
+    private boolean isMaria = TestDatabaseContainer.getVersion().isMaria;
 
     private TestDatabaseContainer masterContainer;
 
@@ -607,7 +607,7 @@ public class JsonBinaryValueIntegrationTest {
                 master.execute(new BinaryLogClientIntegrationTest.Callback<Statement>() {
                     @Override
                     public void execute(Statement statement) throws SQLException {
-                        statement.execute("drop database json_test");
+                        statement.execute("drop database if exists json_test");
                     }
                 });
                 master.close();

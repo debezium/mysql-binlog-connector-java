@@ -3,6 +3,8 @@ package com.github.shyiko.mysql.binlog;
 import org.testng.SkipException;
 import org.testng.annotations.Test;
 
+import com.github.shyiko.mysql.binlog.network.SSLMode;
+
 /**
  * @author vjuranek
  */

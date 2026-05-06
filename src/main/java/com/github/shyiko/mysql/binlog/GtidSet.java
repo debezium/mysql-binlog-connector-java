@@ -21,11 +21,11 @@ import java.util.*;
 
 /**
  * GTID set as described in <a href="https://dev.mysql.com/doc/refman/5.6/en/replication-gtids-concepts.html">GTID
- * Concepts</a> of MySQL 5.6 Reference Manual.
+ * Concepts</a> of MySQL 5.6 Reference Manual, with support for MySQL 8.3+ tagged GTID intervals.
  *
  * <pre>
  * gtid_set: uuid_set[,uuid_set]...
- * uuid_set: uuid:interval[:interval]...
+ * uuid_set: uuid[:tag]:interval[:interval]...
  * uuid: hhhhhhhh-hhhh-hhhh-hhhh-hhhhhhhhhhhh, h: [0-9|A-F]
  * interval: n[-n], (n &gt;= 1)
  * </pre>
@@ -34,7 +34,7 @@ import java.util.*;
  */
 public class GtidSet {
 
-    private final Map<UUID, UUIDSet> map = new LinkedHashMap<UUID, UUIDSet>();
+    private final Map<Tsid, UUIDSet> map = new LinkedHashMap<Tsid, UUIDSet>();
 
     public static GtidSet parse(String gtidStr) {
         if ( MariadbGtidSet.isMariaGtidSet(gtidStr) ) {
@@ -45,28 +45,75 @@ public class GtidSet {
     }
     /**
      * @param gtidSet gtid set comprised of closed intervals (like MySQL's executed_gtid_set).
+     * Supports legacy UUID intervals (uuid:intervals), MySQL tagged GTID-set intervals
+     * (uuid:tag:intervals), and the previous tag-first representation (tag:uuid:intervals).
      */
     public GtidSet(String gtidSet) {
         String[] uuidSets = (gtidSet == null || gtidSet.isEmpty()) ? new String[0] :
             gtidSet.replace("\n", "").split(",");
         for (String uuidSet : uuidSets) {
-            int uuidSeparatorIndex = uuidSet.indexOf(":");
-            UUID sourceId = UUID.fromString(uuidSet.substring(0, uuidSeparatorIndex));
-            List<Interval> intervals = new ArrayList<Interval>();
-            String[] rawIntervals = uuidSet.substring(uuidSeparatorIndex + 1).split(":");
-            for (String interval : rawIntervals) {
-                String[] is = interval.split("-");
-                long[] split = new long[is.length];
-                for (int i = 0, e = is.length; i < e; i++) {
-                    split[i] = Long.parseLong(is[i]);
-                }
-                if (split.length == 1) {
-                    split = new long[] {split[0], split[0]};
-                }
-                intervals.add(new Interval(split[0], split[1]));
+            final String[] parts = uuidSet.split(":");
+
+            // MySQL tagged GTID sets identify intervals by TSID (uuid[:tag]).
+            // Also accept the previous tag-first representation (tag:uuid:intervals).
+            int uuidIndex = 0;
+            int intervalsStartIndex = 1;
+
+            // UUID format: 8-4-4-4-12 hex digits with dashes. If the first token is not a UUID,
+            // treat it as a tag from the previous tag-first representation.
+            if (parts.length >= 3 && !isValidUuidFormat(parts[0])) {
+                // Previous tag-first format: tag:uuid:intervals...
+                uuidIndex = 1;
+                intervalsStartIndex = 2;
             }
-            map.put(sourceId, new UUIDSet(sourceId, intervals));
+
+            final UUID sourceId = UUID.fromString(parts[uuidIndex]);
+            String tag = uuidIndex == 1 ? parts[0] : null;
+            for (int i = intervalsStartIndex; i < parts.length; i++) {
+                final String part = parts[i];
+                if (!isInterval(part)) {
+                    tag = part;
+                    continue;
+                }
+                addInterval(sourceId, tag, parseInterval(part));
+            }
         }
+    }
+
+    private void addInterval(UUID sourceId, String tag, Interval interval) {
+        final Tsid tsid = new Tsid(sourceId, tag);
+        final UUIDSet existing = map.get(tsid);
+        final List<Interval> intervals = existing == null ? new ArrayList<Interval>() :
+            new ArrayList<Interval>(existing.getIntervals());
+        intervals.add(interval);
+        map.put(tsid, new UUIDSet(sourceId, tag, intervals));
+    }
+
+    private static Interval parseInterval(final String interval) {
+        final String[] is = interval.split("-");
+        long[] split = new long[is.length];
+        for (int j = 0, e = is.length; j < e; j++) {
+            split[j] = Long.parseLong(is[j]);
+        }
+        if (split.length == 1) {
+            split = new long[] {split[0], split[0]};
+        }
+        return new Interval(split[0], split[1]);
+    }
+
+    private static boolean isInterval(final String str) {
+        return str.matches("[0-9]+(-[0-9]+)?");
+    }
+
+    /**
+     * Checks if a string matches the UUID format (8-4-4-4-12 hex digits).
+     *
+     * @param str the string to check
+     * @return true if the string is a valid UUID format, false otherwise
+     */
+    private static boolean isValidUuidFormat(final String str) {
+        // UUID format: 8-4-4-4-12 hex digits with dashes
+        return str.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     }
 
     /**
@@ -78,22 +125,32 @@ public class GtidSet {
     }
 
     /**
-     * Find the {@link UUIDSet} for the server with the specified UUID.
+     * Find the untagged {@link UUIDSet} for the server with the specified UUID.
      * @param uuid the UUID of the server
      * @return the {@link UUIDSet} for the identified server, or {@code null} if there are no GTIDs from that server.
      */
     public UUIDSet getUUIDSet(String uuid) {
-        return map.get(UUID.fromString(uuid));
+        return map.get(new Tsid(UUID.fromString(uuid), null));
+    }
+
+    /**
+     * Find the {@link UUIDSet} for the server with the specified UUID and tag.
+     * @param uuid the UUID of the server
+     * @param tag the GTID tag, or {@code null} for untagged GTIDs
+     * @return the {@link UUIDSet} for the identified TSID, or {@code null} if there are no GTIDs for that TSID.
+     */
+    public UUIDSet getUUIDSet(String uuid, String tag) {
+        return map.get(new Tsid(UUID.fromString(uuid), tag));
     }
 
     /**
      * Add or replace the UUIDSet
      * @param uuidSet UUIDSet to be added
-     * @return the old {@link UUIDSet} for the server given in uuidSet param,
-     *         or {@code null} if there are no UUIDSet for the given server.
+     * @return the old {@link UUIDSet} for the TSID given in uuidSet param,
+     *         or {@code null} if there are no UUIDSet for the given TSID.
      */
     public UUIDSet putUUIDSet(UUIDSet uuidSet) {
-        return map.put(uuidSet.getServerId(), uuidSet);
+        return map.put(uuidSet.getTsid(), uuidSet);
     }
 
     /**
@@ -115,9 +172,11 @@ public class GtidSet {
     }
 
     private boolean add(MySqlGtid mySqlGtid) {
-        UUIDSet uuidSet = map.get(mySqlGtid.getServerId());
+        final Tsid tsid = new Tsid(mySqlGtid.getServerId(), mySqlGtid.getTag());
+        UUIDSet uuidSet = map.get(tsid);
         if (uuidSet == null) {
-            map.put(mySqlGtid.getServerId(), uuidSet = new UUIDSet(mySqlGtid.getServerId(), new ArrayList<Interval>()));
+            map.put(tsid, uuidSet = new UUIDSet(mySqlGtid.getServerId(), mySqlGtid.getTag(),
+                new ArrayList<Interval>()));
         }
         return uuidSet.add(mySqlGtid.getTransactionId());
     }
@@ -140,7 +199,7 @@ public class GtidSet {
             return true;
         }
         for (UUIDSet uuidSet : map.values()) {
-            UUIDSet thatSet = other.map.get(uuidSet.getServerId());
+            UUIDSet thatSet = other.map.get(uuidSet.getTsid());
             if (!uuidSet.isContainedWithin(thatSet)) {
                 return false;
             }
@@ -168,8 +227,18 @@ public class GtidSet {
     @Override
     public String toString() {
         List<String> gtids = new ArrayList<String>();
-        for (UUIDSet uuidSet : map.values()) {
-            gtids.add(uuidSet.getServerId() + ":" + join(uuidSet.intervals, ":"));
+        for (Map.Entry<UUID, List<UUIDSet>> entry : getUUIDSetGroups().entrySet()) {
+            StringBuilder sb = new StringBuilder();
+            sb.append(entry.getKey()).append(':');
+            Iterator<UUIDSet> iter = entry.getValue().iterator();
+            if (iter.hasNext()) {
+                appendTaggedIntervals(sb, iter.next());
+            }
+            while (iter.hasNext()) {
+                sb.append(':');
+                appendTaggedIntervals(sb, iter.next());
+            }
+            gtids.add(sb.toString());
         }
         return join(gtids, ",");
     }
@@ -189,6 +258,54 @@ public class GtidSet {
         return sb.substring(0, sb.length() - delimiter.length());
     }
 
+    private Map<UUID, List<UUIDSet>> getUUIDSetGroups() {
+        Map<UUID, List<UUIDSet>> groups = new LinkedHashMap<UUID, List<UUIDSet>>();
+        for (UUIDSet uuidSet : map.values()) {
+            List<UUIDSet> uuidSets = groups.get(uuidSet.getServerId());
+            if (uuidSets == null) {
+                uuidSets = new ArrayList<UUIDSet>();
+                groups.put(uuidSet.getServerId(), uuidSets);
+            }
+            uuidSets.add(uuidSet);
+        }
+        return groups;
+    }
+
+    private static void appendTaggedIntervals(StringBuilder sb, UUIDSet uuidSet) {
+        if (uuidSet.getTag() != null) {
+            sb.append(uuidSet.getTag()).append(':');
+        }
+        sb.append(join(uuidSet.intervals, ":"));
+    }
+
+    private static final class Tsid {
+
+        private final UUID uuid;
+        private final String tag;
+
+        private Tsid(UUID uuid, String tag) {
+            this.uuid = uuid;
+            this.tag = tag == null || tag.isEmpty() ? null : tag;
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * uuid.hashCode() + (tag == null ? 0 : tag.hashCode());
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == this) {
+                return true;
+            }
+            if (obj instanceof Tsid) {
+                Tsid that = (Tsid) obj;
+                return this.uuid.equals(that.uuid) && Objects.equals(this.tag, that.tag);
+            }
+            return false;
+        }
+    }
+
     /**
      * A range of GTIDs for a single server with a specific UUID.
      * @see GtidSet
@@ -196,6 +313,7 @@ public class GtidSet {
     public static final class UUIDSet {
 
         private final UUID uuid;
+        private final String tag;
         private final List<Interval> intervals;
 
         public UUIDSet(String uuid, List<Interval> intervals) {
@@ -203,10 +321,20 @@ public class GtidSet {
         }
 
         public UUIDSet(UUID uuid, List<Interval> intervals) {
+            this(uuid, null, intervals);
+        }
+
+        public UUIDSet(String uuid, String tag, List<Interval> intervals) {
+            this(UUID.fromString(uuid), tag, intervals);
+        }
+
+        public UUIDSet(UUID uuid, String tag, List<Interval> intervals) {
             this.uuid = uuid;
+            this.tag = tag == null || tag.isEmpty() ? null : tag;
             this.intervals = intervals;
             if (intervals.size() > 1) {
-                joinAdjacentIntervals(0);
+                Collections.sort(intervals);
+                joinAdjacentIntervals();
             }
         }
 
@@ -237,13 +365,23 @@ public class GtidSet {
         }
 
         /**
-         * Collapses intervals like a-(b-1):b-c into a-c (only in index+-1 range).
+         * Collapses adjacent or overlapping intervals near the supplied index.
          */
         private void joinAdjacentIntervals(int index) {
             for (int i = Math.min(index + 1, intervals.size() - 1), e = Math.max(index - 1, 0); i > e; i--) {
                 Interval a = intervals.get(i - 1), b = intervals.get(i);
-                if (a.end + 1 == b.start) {
-                    a.end = b.end;
+                if (a.end + 1 >= b.start) {
+                    a.end = Math.max(a.end, b.end);
+                    intervals.remove(i);
+                }
+            }
+        }
+
+        private void joinAdjacentIntervals() {
+            for (int i = intervals.size() - 1; i > 0; i--) {
+                Interval a = intervals.get(i - 1), b = intervals.get(i);
+                if (a.end + 1 >= b.start) {
+                    a.end = Math.max(a.end, b.end);
                     intervals.remove(i);
                 }
             }
@@ -285,6 +423,14 @@ public class GtidSet {
             return uuid;
         }
 
+        public String getTag() {
+            return tag;
+        }
+
+        private Tsid getTsid() {
+            return new Tsid(uuid, tag);
+        }
+
 
         /**
          * Get the intervals of transaction numbers.
@@ -307,6 +453,9 @@ public class GtidSet {
             }
             if (!this.uuid.equals(other.uuid)) {
                 // not even the same server ...
+                return false;
+            }
+            if (!Objects.equals(this.tag, other.tag)) {
                 return false;
             }
             if (this.intervals.isEmpty()) {
@@ -333,7 +482,7 @@ public class GtidSet {
 
         @Override
         public int hashCode() {
-            return uuid.hashCode();
+            return 31 * uuid.hashCode() + (tag == null ? 0 : tag.hashCode());
         }
 
         @Override
@@ -344,6 +493,7 @@ public class GtidSet {
             if (obj instanceof UUIDSet) {
                 UUIDSet that = (UUIDSet) obj;
                 return this.uuid.equals(that.uuid) &&
+                    Objects.equals(this.tag, that.tag) &&
                     this.getIntervals().equals(that.getIntervals());
             }
             return super.equals(obj);
@@ -356,6 +506,9 @@ public class GtidSet {
                 sb.append(',');
             }
             sb.append(uuid).append(':');
+            if (tag != null) {
+                sb.append(tag).append(':');
+            }
             Iterator<Interval> iter = intervals.iterator();
             if (iter.hasNext()) {
                 sb.append(iter.next());

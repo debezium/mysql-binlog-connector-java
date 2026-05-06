@@ -74,7 +74,7 @@ public class EventTypeTest {
     public void testByEventNumber() {
         assertEquals(EventType.byEventNumber(0), EventType.UNKNOWN);
         assertNull(EventType.byEventNumber(-1));
-        assertNull(EventType.byEventNumber(41));
+        assertNull(EventType.byEventNumber(43));
         assertNull(EventType.byEventNumber(159));
         assertNull(EventType.byEventNumber(164));
         assertEquals(EventType.byEventNumber(1), EventType.START_V3);

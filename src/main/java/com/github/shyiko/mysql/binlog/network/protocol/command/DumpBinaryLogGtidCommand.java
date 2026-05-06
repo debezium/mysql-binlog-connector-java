@@ -48,15 +48,23 @@ public class DumpBinaryLogGtidCommand implements Command {
         buffer.writeString(this.binlogFilename);
         buffer.writeLong(this.binlogPosition, 8);
         Collection<GtidSet.UUIDSet> uuidSets = gtidSet.getUUIDSets();
+        boolean taggedFormat = containsTaggedGtid(uuidSets);
         int dataSize = 8 /* number of uuidSets */;
         for (GtidSet.UUIDSet uuidSet : uuidSets) {
-            dataSize += 16 /* uuid */ + 8 /* number of intervals */ +
+            dataSize += 16 /* uuid */ + (taggedFormat ? 1 + getTagLength(uuidSet) : 0) + 8 /* number of intervals */ +
                 uuidSet.getIntervals().size() /* number of intervals */ * 16 /* start-end */;
         }
         buffer.writeInteger(dataSize, 4);
-        buffer.writeLong(uuidSets.size(), 8);
+        buffer.writeLong(getEncodedUuidSetCount(uuidSets.size(), taggedFormat), 8);
         for (GtidSet.UUIDSet uuidSet : uuidSets) {
             buffer.write(hexToByteArray(uuidSet.getUUID().replace("-", "")));
+            if (taggedFormat) {
+                String tag = uuidSet.getTag();
+                buffer.writeInteger(getTagLength(uuidSet) << 1, 1);
+                if (tag != null) {
+                    buffer.writeString(tag);
+                }
+            }
             Collection<GtidSet.Interval> intervals = uuidSet.getIntervals();
             buffer.writeLong(intervals.size(), 8);
             for (GtidSet.Interval interval : intervals) {
@@ -65,6 +73,27 @@ public class DumpBinaryLogGtidCommand implements Command {
             }
         }
         return buffer.toByteArray();
+    }
+
+    private static boolean containsTaggedGtid(Collection<GtidSet.UUIDSet> uuidSets) {
+        for (GtidSet.UUIDSet uuidSet : uuidSets) {
+            if (uuidSet.getTag() != null && !uuidSet.getTag().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int getTagLength(GtidSet.UUIDSet uuidSet) {
+        String tag = uuidSet.getTag();
+        return tag == null ? 0 : tag.length();
+    }
+
+    private static long getEncodedUuidSetCount(int uuidSetCount, boolean taggedFormat) {
+        if (!taggedFormat) {
+            return uuidSetCount;
+        }
+        return (1L << 56) | ((long) uuidSetCount << 8) | 1L;
     }
 
     private static byte[] hexToByteArray(String uuid) {

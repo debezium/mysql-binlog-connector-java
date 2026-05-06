@@ -20,9 +20,11 @@ import com.github.shyiko.mysql.binlog.GtidSet.UUIDSet;
 import com.github.shyiko.mysql.binlog.event.MySqlGtid;
 import org.testng.annotations.Test;
 
+import java.util.Collection;
 import java.util.LinkedList;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertTrue;
 
@@ -184,4 +186,148 @@ public class GtidSetTest {
         GtidSet gtidSet = new GtidSet("");
         gtidSet.addGtid(MariadbGtidSet.MariaGtid.parse("1-2-3"));
     }
+
+    @Test
+    public void testParseTaggedGtidSet() {
+        // Test parsing GTID set with tagged GTIDs (MySQL 8.3+)
+        final GtidSet gtidSet = new GtidSet("24bc7850-2c16-11e6-a073-0242ac110002:mytag:1-5");
+
+        final Collection<GtidSet.UUIDSet> uuidSets = gtidSet.getUUIDSets();
+        assertEquals(uuidSets.size(), 1);
+
+        final GtidSet.UUIDSet uuidSet = uuidSets.iterator().next();
+        assertEquals(uuidSet.getServerId().toString(), "24bc7850-2c16-11e6-a073-0242ac110002");
+        assertEquals(uuidSet.getTag(), "mytag");
+        assertEquals(uuidSet.getIntervals().size(), 1);
+        assertEquals(uuidSet.getIntervals().get(0).getStart(), 1L);
+        assertEquals(uuidSet.getIntervals().get(0).getEnd(), 5L);
+        assertEquals(gtidSet.toString(), "24bc7850-2c16-11e6-a073-0242ac110002:mytag:1-5");
+    }
+
+    @Test
+    public void testParseTaggedGtidSetWithMultipleIntervals() {
+        // Test parsing tagged GTID set with multiple intervals
+        final GtidSet gtidSet = new GtidSet("24bc7850-2c16-11e6-a073-0242ac110002:prod:1-5:10-15:20");
+
+        final Collection<GtidSet.UUIDSet> uuidSets = gtidSet.getUUIDSets();
+        assertEquals(uuidSets.size(), 1);
+
+        final GtidSet.UUIDSet uuidSet = uuidSets.iterator().next();
+        assertEquals(uuidSet.getServerId().toString(), "24bc7850-2c16-11e6-a073-0242ac110002");
+        assertEquals(uuidSet.getTag(), "prod");
+        assertEquals(uuidSet.getIntervals().size(), 3);
+        assertEquals(uuidSet.getIntervals().get(0).getStart(), 1L);
+        assertEquals(uuidSet.getIntervals().get(0).getEnd(), 5L);
+        assertEquals(uuidSet.getIntervals().get(1).getStart(), 10L);
+        assertEquals(uuidSet.getIntervals().get(1).getEnd(), 15L);
+        assertEquals(uuidSet.getIntervals().get(2).getStart(), 20L);
+        assertEquals(uuidSet.getIntervals().get(2).getEnd(), 20L);
+    }
+
+    @Test
+    public void testParseMixedGtidSet() {
+        // Test parsing GTID set with both tagged and non-tagged GTIDs
+        final GtidSet gtidSet = new GtidSet(
+            "24bc7850-2c16-11e6-a073-0242ac110002:1-5," +
+            "aae57b2f-8e44-11ee-a3d6-a036bcda1a41:mytag:1-10"
+        );
+
+        final Collection<GtidSet.UUIDSet> uuidSets = gtidSet.getUUIDSets();
+        assertEquals(uuidSets.size(), 2);
+
+        // Verify both UUIDs are present
+        assertNotNull(gtidSet.getUUIDSet("24bc7850-2c16-11e6-a073-0242ac110002"));
+        assertNotNull(gtidSet.getUUIDSet("aae57b2f-8e44-11ee-a3d6-a036bcda1a41", "mytag"));
+    }
+
+    @Test
+    public void testParseExecutedGtidSetWithTaggedIntervals() {
+        final GtidSet gtidSet = new GtidSet(
+            "24bc7850-2c16-11e6-a073-0242ac110002:1-20:testtag:1-3"
+        );
+
+        assertEquals(gtidSet.toString(), "24bc7850-2c16-11e6-a073-0242ac110002:1-20:testtag:1-3");
+    }
+
+    @Test
+    public void testParseExecutedGtidSetWithSeparatedTaggedIntervals() {
+        final GtidSet gtidSet = new GtidSet(
+            "24bc7850-2c16-11e6-a073-0242ac110002:1-5:testtag:7-9:othertag:6"
+        );
+
+        assertEquals(gtidSet.toString(), "24bc7850-2c16-11e6-a073-0242ac110002:1-5:testtag:7-9:othertag:6-6");
+    }
+
+    @Test
+    public void testParseMixedGtidSetMultipleServers() {
+        // Test parsing complex GTID set with multiple servers, some tagged
+        final GtidSet gtidSet = new GtidSet(
+            "24bc7850-2c16-11e6-a073-0242ac110002:1-5:10," +
+            "aae57b2f-8e44-11ee-a3d6-a036bcda1a41:tag1:1-10:15-20," +
+            "994ab859-8ea8-11ee-a568-a036bcda1a41:1-3," +
+            "bd9794e0-1d65-11ed-a7e7-0adb305b3a12:tag2:5-9"
+        );
+
+        final Collection<GtidSet.UUIDSet> uuidSets = gtidSet.getUUIDSets();
+        assertEquals(uuidSets.size(), 4);
+    }
+
+    @Test
+    public void testAddTaggedMySqlGtid() {
+        // Test adding tagged GTID to set
+        final GtidSet gtidSet = new GtidSet("");
+        gtidSet.addGtid(MySqlGtid.fromString("00000000-0000-0000-0000-000000000000:mytag:2"));
+
+        assertEquals(gtidSet.toString(), "00000000-0000-0000-0000-000000000000:mytag:2-2");
+    }
+
+    @Test
+    public void testAddTaggedMySqlGtidToExistingSet() {
+        // Test adding tagged GTID to existing set
+        final GtidSet gtidSet = new GtidSet("00000000-0000-0000-0000-000000000000:1");
+        gtidSet.addGtid(MySqlGtid.fromString("00000000-0000-0000-0000-000000000000:mytag:2"));
+
+        assertEquals(gtidSet.toString(), "00000000-0000-0000-0000-000000000000:1-1:mytag:2-2");
+    }
+
+    @Test
+    public void testParseTaggedGtidSetWithComplexTag() {
+        // Test parsing GTID set with complex tag name
+        final GtidSet gtidSet = new GtidSet("24bc7850-2c16-11e6-a073-0242ac110002:prod_db_01:1-100");
+
+        final Collection<GtidSet.UUIDSet> uuidSets = gtidSet.getUUIDSets();
+        assertEquals(uuidSets.size(), 1);
+
+        final GtidSet.UUIDSet uuidSet = uuidSets.iterator().next();
+        assertEquals(uuidSet.getServerId().toString(), "24bc7850-2c16-11e6-a073-0242ac110002");
+        assertEquals(uuidSet.getTag(), "prod_db_01");
+        assertEquals(uuidSet.getIntervals().size(), 1);
+        assertEquals(uuidSet.getIntervals().get(0).getStart(), 1L);
+        assertEquals(uuidSet.getIntervals().get(0).getEnd(), 100L);
+    }
+
+    @Test
+    public void testParseTaggedAndUntaggedGtidSetsAreDistinct() {
+        final GtidSet legacySet = new GtidSet("24bc7850-2c16-11e6-a073-0242ac110002:1-5");
+        final GtidSet taggedSet = new GtidSet("24bc7850-2c16-11e6-a073-0242ac110002:tag:1-5");
+
+        // Tagged and untagged GTIDs from the same UUID are different TSIDs.
+        final GtidSet.UUIDSet legacyUuidSet = legacySet.getUUIDSet("24bc7850-2c16-11e6-a073-0242ac110002");
+
+        assertNotNull(legacyUuidSet);
+        assertEquals(legacyUuidSet.getTag(), null);
+        assertEquals(taggedSet.toString(), "24bc7850-2c16-11e6-a073-0242ac110002:tag:1-5");
+        assertNotEquals(legacySet, taggedSet);
+    }
+
+    @Test
+    public void testParsePreviousTagFirstGtidSetFormat() {
+        final GtidSet gtidSet = new GtidSet("tag:24bc7850-2c16-11e6-a073-0242ac110002:1-5");
+
+        final GtidSet.UUIDSet uuidSet = gtidSet.getUUIDSet("24bc7850-2c16-11e6-a073-0242ac110002", "tag");
+        assertNotNull(uuidSet);
+        assertEquals(uuidSet.getIntervals().get(0), new Interval(1, 5));
+        assertEquals(gtidSet.toString(), "24bc7850-2c16-11e6-a073-0242ac110002:tag:1-5");
+    }
+
 }
