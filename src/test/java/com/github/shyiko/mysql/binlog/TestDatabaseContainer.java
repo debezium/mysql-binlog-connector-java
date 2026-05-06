@@ -45,8 +45,14 @@ public class TestDatabaseContainer {
      * Creates a new test database container with specific options.
      */
     public TestDatabaseContainer(TestDatabaseContainerOptions options) {
-        // Use version from options first, then fall back to system property
-        String version = options.version != null ? options.version : getImageFromSystemProperty();
+        // Use version from options first, then fall back to system property, then default
+        String version = options.version;
+        if (version == null || version.isEmpty()) {
+            version = getImageFromSystemProperty();
+        }
+        if (version == null || version.isEmpty()) {
+            version = "mysql:8.0";  // Default version
+        }
 
         logger.info("Using database image: " + version);
 
@@ -85,6 +91,15 @@ public class TestDatabaseContainer {
             commands.add("--gtid-mode=ON");
             commands.add("--log-slave-updates=ON");
             commands.add("--enforce-gtid-consistency=true");
+
+            // Enable GTID tagging for MySQL 8.3+
+            if (!version.toLowerCase().startsWith("mariadb")) {
+                MysqlVersion mysqlVersion = parseVersion(version);
+                if (mysqlVersion.atLeast(8, 3)) {
+                    logger.info("Enabling GTID tagging for MySQL 8.3+");
+                    commands.add("--binlog-transaction-dependency-tracking=WRITESET");
+                }
+            }
         }
 
         commands.add("--log-bin=master");
@@ -115,7 +130,10 @@ public class TestDatabaseContainer {
 
     private static String getImageFromSystemProperty() {
         String mysqlImage = System.getProperty("mysql.image");
-        return mysqlImage == null ? "mysql:8.0" : mysqlImage;
+        String result = mysqlImage == null ? "mysql:8.0" : mysqlImage;
+        Logger.getLogger(TestDatabaseContainer.class.getName()).info(
+            "mysql.image system property: " + mysqlImage + " -> using: " + result);
+        return result;
     }
 
     private static MysqlVersion parseVersion(String imageTag) {

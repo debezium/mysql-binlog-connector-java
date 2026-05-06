@@ -241,6 +241,9 @@
                     <includes>
                         <include>**/*IntegrationTest.java</include>
                     </includes>
+                    <systemPropertyVariables>
+                        <mysql.image>${mysql.image}</mysql.image>
+                    </systemPropertyVariables>
                 </configuration>
                 <executions>
                     <execution>
@@ -319,6 +322,12 @@
             <id>mariadb</id>
             <properties>
                 <mysql.image>mirror.gcr.io/library/mariadb:10.6</mysql.image>
+            </properties>
+        </profile>
+        <profile>
+            <id>mysql-8.4</id>
+            <properties>
+                <mysql.image>container-registry.oracle.com/mysql/community-server:8.4</mysql.image>
             </properties>
         </profile>
     </profiles>
