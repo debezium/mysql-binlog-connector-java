@@ -18,6 +18,8 @@ package com.github.shyiko.mysql.binlog.event.deserialization;
 import static java.lang.String.format;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import com.github.shyiko.mysql.binlog.event.PreviousGtidSetEventData;
 import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
@@ -42,17 +44,14 @@ public class PreviousGtidSetDeserializer implements EventDataDeserializer<Previo
             nUuidsMask = 0x00ffffffffffff00L;
             nUuids = (int) ((nUuidsEncoded & nUuidsMask) >> 8);
         }
-        String[] gtids = new String[nUuids];
+        Map<String, String> gtids = new LinkedHashMap<String, String>();
         for (int i = 0; i < nUuids; i++) {
             String uuid = formatUUID(inputStream.read(16));
+            String tag = null;
 
             if (formatEncoded==TAGGED_GTID) {
                 int len = inputStream.readInteger(1);
-                String tag = inputStream.readString(len >> 1);
-
-                if (!tag.isEmpty()) {
-                    uuid += ":" + tag;
-                }
+                tag = inputStream.readString(len >> 1);
             }
 
             int nIntervals = inputStream.readInteger(8);
@@ -63,9 +62,18 @@ public class PreviousGtidSetDeserializer implements EventDataDeserializer<Previo
                 intervals[j] = start + "-" + (end - 1);
             }
 
-            gtids[i] = format("%s:%s", uuid, join(intervals, ":"));
+            String uuidSet = gtids.get(uuid);
+            if (uuidSet == null) {
+                uuidSet = uuid;
+            }
+            if (tag != null && !tag.isEmpty()) {
+                uuidSet = format("%s:%s:%s", uuidSet, tag, join(intervals, ":"));
+            } else {
+                uuidSet = format("%s:%s", uuidSet, join(intervals, ":"));
+            }
+            gtids.put(uuid, uuidSet);
         }
-        return new PreviousGtidSetEventData(join(gtids, ","));
+        return new PreviousGtidSetEventData(join(gtids.values().toArray(new String[0]), ","));
     }
 
     private String formatUUID(byte[] bytes) {

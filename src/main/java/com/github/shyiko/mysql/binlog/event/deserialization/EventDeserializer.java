@@ -116,6 +116,8 @@ public class EventDeserializer {
                 new RowsQueryEventDataDeserializer());
         eventDataDeserializers.put(EventType.GTID,
                 new GtidEventDataDeserializer());
+        eventDataDeserializers.put(EventType.GTID_TAGGED,
+                new GtidTaggedEventDataDeserializer());
        eventDataDeserializers.put(EventType.PREVIOUS_GTIDS,
                new PreviousGtidSetDeserializer());
         eventDataDeserializers.put(EventType.XA_PREPARE,

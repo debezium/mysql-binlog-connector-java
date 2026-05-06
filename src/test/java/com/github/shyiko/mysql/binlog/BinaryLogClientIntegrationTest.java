@@ -1013,7 +1013,7 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     public void testSHA2CachingAuthAsDefault() throws Exception {
-        if ( !mysqlVersion.atLeast(8, 0) )
+        if ( !mysqlVersion.atLeast(8, 0) || !mysqlVersion.lessThan(8, 4) )
             throw new SkipException("skipping mysql8 auth test");
 
         TestDatabaseContainerOptions opts = new TestDatabaseContainerOptions();
