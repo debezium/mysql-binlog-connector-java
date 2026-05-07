@@ -67,11 +67,45 @@ public class TestDatabaseContainer {
         } else {
             this.databaseType = DatabaseType.MYSQL;
             DockerImageName imageName = DockerImageName.parse(version).asCompatibleSubstituteFor("mysql");
+            
+            // Build command parameters
+            List<String> commands = new java.util.ArrayList<>();
+            
+            // Configure container based on options
+            if (options.gtid) {
+                logger.info("Enabling GTID mode");
+                commands.add("--gtid-mode=ON");
+                commands.add("--log-slave-updates=ON");
+                commands.add("--enforce-gtid-consistency=true");
+            }
+            
+            commands.add("--log-bin=master");
+            commands.add("--binlog_format=row");
+            commands.add("--server-id=" + options.serverID);
+            commands.add("--default-time-zone=+00:00");
+            
+            // Add full row metadata for MySQL 8.0+
+            if (options.fullRowMetaData && !version.toLowerCase().startsWith("mariadb")) {
+                MysqlVersion mysqlVersion = parseVersion(version);
+                if (mysqlVersion.atLeast(8, 0)) {
+                    commands.add("--binlog-row-metadata=FULL");
+                }
+            }
+            
+            // Allow larger data packets for testing
+            commands.add("--max_allowed_packet=16M");
+            
+            // Add extra parameters if provided
+            if (options.extraParams != null && !options.extraParams.isEmpty()) {
+                String[] extraParamArray = options.extraParams.trim().split("\\s+");
+                commands.addAll(Arrays.asList(extraParamArray));
+            }
+            
             this.container = new MySQLContainer<>(imageName)
                     .withDatabaseName("mysql")
                     .withUsername("root")
                     .withPassword("")
-                    .withCommand("--default-time-zone=+00:00");
+                    .withCommand(commands.toArray(new String[0]));
         }
 
         // Configure network if provided (for master-slave setups)
@@ -81,51 +115,6 @@ public class TestDatabaseContainer {
                 container.withNetworkAliases(options.networkAlias);
             }
         }
-
-        // Build all command parameters together
-        List<String> commands = new java.util.ArrayList<>();
-
-        // Configure container based on options
-        if (options.gtid) {
-            logger.info("Enabling GTID mode");
-            commands.add("--gtid-mode=ON");
-            commands.add("--log-slave-updates=ON");
-            commands.add("--enforce-gtid-consistency=true");
-
-            // Enable GTID tagging for MySQL 8.3+
-            if (!version.toLowerCase().startsWith("mariadb")) {
-                MysqlVersion mysqlVersion = parseVersion(version);
-                if (mysqlVersion.atLeast(8, 3)) {
-                    logger.info("Enabling GTID tagging for MySQL 8.3+");
-                    commands.add("--binlog-transaction-dependency-tracking=WRITESET");
-                }
-            }
-        }
-
-        commands.add("--log-bin=master");
-        commands.add("--binlog_format=row");
-        commands.add("--server-id=" + options.serverID);
-        commands.add("--default-time-zone=+00:00");
-
-        // Add full row metadata for MySQL 8.0+
-        if (options.fullRowMetaData && !version.toLowerCase().startsWith("mariadb")) {
-            MysqlVersion mysqlVersion = parseVersion(version);
-            if (mysqlVersion.atLeast(8, 0)) {
-                commands.add("--binlog-row-metadata=FULL");
-            }
-        }
-
-        // Allow larger data packets for testing
-        commands.add("--max_allowed_packet=16M");
-
-        // Add extra parameters if provided
-        if (options.extraParams != null && !options.extraParams.isEmpty()) {
-            String[] extraParamArray = options.extraParams.trim().split("\\s+");
-            commands.addAll(Arrays.asList(extraParamArray));
-        }
-
-        // Apply all commands at once
-        container.withCommand(commands.toArray(new String[0]));
     }
 
     private static String getImageFromSystemProperty() {
@@ -174,8 +163,16 @@ public class TestDatabaseContainer {
         }
 
         if (databaseType == DatabaseType.MYSQL) {
-            this.connection.createStatement().executeUpdate(
-                "CREATE USER 'maxwell'@'%' IDENTIFIED WITH mysql_native_password BY 'maxwell'");
+            // MySQL 8.4+ removed mysql_native_password plugin, use default authentication
+            String version = getImageFromSystemProperty();
+            MysqlVersion mysqlVersion = parseVersion(version);
+            if (mysqlVersion.atLeast(8, 4)) {
+                this.connection.createStatement().executeUpdate(
+                    "CREATE USER 'maxwell'@'%' IDENTIFIED BY 'maxwell'");
+            } else {
+                this.connection.createStatement().executeUpdate(
+                    "CREATE USER 'maxwell'@'%' IDENTIFIED WITH mysql_native_password BY 'maxwell'");
+            }
         } else {
             this.connection.createStatement().executeUpdate(
                 "CREATE USER 'maxwell'@'%' IDENTIFIED BY 'maxwell'");
@@ -325,7 +322,13 @@ public class TestDatabaseContainer {
      */
     public void setupSlave(TestDatabaseContainer master) throws SQLException {
         Connection masterConn = master.getConnection();
-        ResultSet rs = masterConn.createStatement().executeQuery("SHOW MASTER STATUS");
+        
+        // MySQL 8.4+ renamed SHOW MASTER STATUS to SHOW BINARY LOG STATUS
+        String version = getImageFromSystemProperty();
+        MysqlVersion mysqlVersion = parseVersion(version);
+        String statusQuery = mysqlVersion.atLeast(8, 4) ? "SHOW BINARY LOG STATUS" : "SHOW MASTER STATUS";
+        
+        ResultSet rs = masterConn.createStatement().executeQuery(statusQuery);
         if (!rs.next()) {
             throw new RuntimeException("Could not get master status");
         }
@@ -341,25 +344,67 @@ public class TestDatabaseContainer {
 
         logger.info("Master container IP: " + masterHost);
 
-        String changeSQL = String.format(
-            "CHANGE MASTER TO master_host = '%s', master_user='maxwell', master_password='maxwell', " +
-            "master_log_file = '%s', master_log_pos = %d, master_port = %d",
-            masterHost, file, position, 3306
-        );
+        // MySQL 8.4+ renamed replication commands
+        String versionStr = getImageFromSystemProperty();
+        MysqlVersion mysqlVer = parseVersion(versionStr);
+        boolean isMySQL84Plus = mysqlVer.atLeast(8, 4);
+        
+        String changeSQL;
+        String startCommand;
+        String showStatusCommand;
+        String ioRunningColumn;
+        String sqlRunningColumn;
+        
+        if (isMySQL84Plus) {
+            changeSQL = String.format(
+                "CHANGE REPLICATION SOURCE TO SOURCE_HOST = '%s', SOURCE_USER='maxwell', SOURCE_PASSWORD='maxwell', " +
+                "SOURCE_LOG_FILE = '%s', SOURCE_LOG_POS = %d, SOURCE_PORT = %d",
+                masterHost, file, position, 3306
+            );
+            startCommand = "START REPLICA";
+            showStatusCommand = "SHOW REPLICA STATUS";
+            ioRunningColumn = "Replica_IO_Running";
+            sqlRunningColumn = "Replica_SQL_Running";
+        } else {
+            changeSQL = String.format(
+                "CHANGE MASTER TO master_host = '%s', master_user='maxwell', master_password='maxwell', " +
+                "master_log_file = '%s', master_log_pos = %d, master_port = %d",
+                masterHost, file, position, 3306
+            );
+            startCommand = "START SLAVE";
+            showStatusCommand = "SHOW SLAVE STATUS";
+            ioRunningColumn = "Slave_IO_Running";
+            sqlRunningColumn = "Slave_SQL_Running";
+        }
 
         logger.info("Starting up slave: " + changeSQL);
         getConnection().createStatement().execute(changeSQL);
-        getConnection().createStatement().execute("START SLAVE");
+        getConnection().createStatement().execute(startCommand);
 
-        ResultSet status = query("SHOW SLAVE STATUS");
+        // Wait a moment for replication to start before checking status
+        // The IO thread needs time to establish connection to the master
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while waiting for replication to start", e);
+        }
+
+        ResultSet status = query(showStatusCommand);
         if (!status.next()) {
             throw new RuntimeException("Could not get slave status");
         }
 
-        if (status.getString("Slave_IO_Running").equals("No") ||
-            status.getString("Slave_SQL_Running").equals("No")) {
-            throw new RuntimeException("Could not start slave: " + dumpQuery("SHOW SLAVE STATUS"));
+        String ioRunning = status.getString(ioRunningColumn);
+        String sqlRunning = status.getString(sqlRunningColumn);
+        
+        // IO thread may still be "Connecting" initially, which is acceptable
+        // Only fail if it's explicitly "No" (error state)
+        if (ioRunning.equals("No") || sqlRunning.equals("No")) {
+            throw new RuntimeException("Could not start slave: " + dumpQuery(showStatusCommand));
         }
+        
+        logger.info("Slave replication started: IO=" + ioRunning + ", SQL=" + sqlRunning);
         status.close();
     }
 
@@ -367,7 +412,12 @@ public class TestDatabaseContainer {
      * Waits for the slave to catch up with the master using Awaitility.
      */
     public void waitForSlaveToBeCurrent(TestDatabaseContainer master) throws Exception {
-        ResultSet ms = master.query("SHOW MASTER STATUS");
+        // MySQL 8.4+ renamed SHOW MASTER STATUS to SHOW BINARY LOG STATUS
+        String version = getImageFromSystemProperty();
+        MysqlVersion mysqlVersion = parseVersion(version);
+        String statusQuery = mysqlVersion.atLeast(8, 4) ? "SHOW BINARY LOG STATUS" : "SHOW MASTER STATUS";
+        
+        ResultSet ms = master.query(statusQuery);
         ms.next();
         final String masterFile = ms.getString("File");
         final Long masterPos = ms.getLong("Position");
@@ -375,22 +425,30 @@ public class TestDatabaseContainer {
 
         logger.info("Waiting for slave to catch up: master file=" + masterFile + ", position=" + masterPos);
 
+        // MySQL 8.4+ renamed SHOW SLAVE STATUS to SHOW REPLICA STATUS
+        final boolean isMySQL84Plus = mysqlVersion.atLeast(8, 4);
+        final String showStatusCommand = isMySQL84Plus ? "SHOW REPLICA STATUS" : "SHOW SLAVE STATUS";
+        final String ioRunningColumn = isMySQL84Plus ? "Replica_IO_Running" : "Slave_IO_Running";
+        final String sqlRunningColumn = isMySQL84Plus ? "Replica_SQL_Running" : "Slave_SQL_Running";
+        final String relayMasterLogFileColumn = isMySQL84Plus ? "Relay_Source_Log_File" : "Relay_Master_Log_File";
+        final String execMasterLogPosColumn = isMySQL84Plus ? "Exec_Source_Log_Pos" : "Exec_Master_Log_Pos";
+
         Awaitility.await()
             .atMost(Duration.ofSeconds(30))
             .pollInterval(Duration.ofMillis(200))
             .pollDelay(Duration.ZERO)
             .ignoreExceptions()
             .until(() -> {
-                try (ResultSet rs = query("SHOW SLAVE STATUS")) {
+                try (ResultSet rs = query(showStatusCommand)) {
                     if (!rs.next()) {
                         logger.warning("Slave status not available");
                         return false;
                     }
 
-                    String slaveIORunning = rs.getString("Slave_IO_Running");
-                    String slaveSQLRunning = rs.getString("Slave_SQL_Running");
-                    String relayMasterLogFile = rs.getString("Relay_Master_Log_File");
-                    Long execMasterLogPos = rs.getLong("Exec_Master_Log_Pos");
+                    String slaveIORunning = rs.getString(ioRunningColumn);
+                    String slaveSQLRunning = rs.getString(sqlRunningColumn);
+                    String relayMasterLogFile = rs.getString(relayMasterLogFileColumn);
+                    Long execMasterLogPos = rs.getLong(execMasterLogPosColumn);
 
                     logger.info("Slave status: IO=" + slaveIORunning + ", SQL=" + slaveSQLRunning +
                                ", file=" + relayMasterLogFile + ", pos=" + execMasterLogPos);

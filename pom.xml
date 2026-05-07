@@ -315,7 +315,7 @@
         <profile>
             <id>mysql-8.0</id>
             <properties>
-                <mysql.image>container-registry.oracle.com/mysql/community-server:8.0</mysql.image>
+                <mysql.image>mirror.gcr.io/mysql:8.0</mysql.image>
             </properties>
         </profile>
         <profile>
@@ -327,7 +327,7 @@
         <profile>
             <id>mysql-8.4</id>
             <properties>
-                <mysql.image>container-registry.oracle.com/mysql/community-server:8.4</mysql.image>
+                <mysql.image>mirror.gcr.io/mysql:8.4</mysql.image>
             </properties>
         </profile>
     </profiles>

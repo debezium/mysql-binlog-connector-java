@@ -145,7 +145,13 @@ public class MysqlOnetimeServer {
 
 	public void setupSlave(int masterPort) throws SQLException {
 		Connection master = DriverManager.getConnection("jdbc:mysql://127.0.0.1:" + masterPort + "/mysql?useSSL=false", "root", "");
-		ResultSet rs = master.createStatement().executeQuery("show master status");
+		
+		// MySQL 8.4+ renamed SHOW MASTER STATUS to SHOW BINARY LOG STATUS and replication commands
+		String version = System.getProperty("mysql.image", "mysql:8.0");
+		boolean isMySQL84Plus = version.contains("8.4") || version.contains("8.5") || version.contains("9.");
+		String statusQuery = isMySQL84Plus ? "SHOW BINARY LOG STATUS" : "show master status";
+		
+		ResultSet rs = master.createStatement().executeQuery(statusQuery);
 		if ( !rs.next() )
 			throw new RuntimeException("could not get master status");
 
@@ -153,25 +159,39 @@ public class MysqlOnetimeServer {
 		Long position = rs.getLong("Position");
         rs.close();
 
-		String changeSQL = String.format(
-			"CHANGE MASTER to master_host = '127.0.0.1', master_user='maxwell', master_password='maxwell', "
-			+ "master_log_file = '%s', master_log_pos = %d, master_port = %d",
-			file, position, masterPort
-		);
+		String changeSQL;
+		if (isMySQL84Plus) {
+			changeSQL = String.format(
+				"CHANGE REPLICATION SOURCE to SOURCE_HOST = '127.0.0.1', SOURCE_USER='maxwell', SOURCE_PASSWORD='maxwell', "
+				+ "SOURCE_LOG_FILE = '%s', SOURCE_LOG_POS = %d, SOURCE_PORT = %d",
+				file, position, masterPort
+			);
+		} else {
+			changeSQL = String.format(
+				"CHANGE MASTER to master_host = '127.0.0.1', master_user='maxwell', master_password='maxwell', "
+				+ "master_log_file = '%s', master_log_pos = %d, master_port = %d",
+				file, position, masterPort
+			);
+		}
 		logger.info("starting up slave: " + changeSQL);
 		getConnection().createStatement().execute(changeSQL);
-		getConnection().createStatement().execute("START SLAVE");
-
+		
+		String startCommand = isMySQL84Plus ? "START REPLICA" : "START SLAVE";
+		getConnection().createStatement().execute(startCommand);
 
 		rs.close();
 
-        ResultSet status = query("show slave status");
+		String showStatusCommand = isMySQL84Plus ? "SHOW REPLICA STATUS" : "show slave status";
+        ResultSet status = query(showStatusCommand);
         if ( !status.next() )
             throw new RuntimeException("could not get slave status");
 
-        if ( status.getString("Slave_IO_Running").equals("No")
-                || status.getString("Slave_SQL_Running").equals("No")) {
-            throw new RuntimeException("could not start slave: " + dumpQuery("show slave status"));
+        String ioRunningColumn = isMySQL84Plus ? "Replica_IO_Running" : "Slave_IO_Running";
+        String sqlRunningColumn = isMySQL84Plus ? "Replica_SQL_Running" : "Slave_SQL_Running";
+        
+        if ( status.getString(ioRunningColumn).equals("No")
+                || status.getString(sqlRunningColumn).equals("No")) {
+            throw new RuntimeException("could not start slave: " + dumpQuery(showStatusCommand));
 
         }
         status.close();
@@ -271,17 +291,25 @@ public class MysqlOnetimeServer {
 	}
 
 	public void waitForSlaveToBeCurrent(MysqlOnetimeServer master) throws Exception {
-		ResultSet ms = master.query("show master status");
+		// MySQL 8.4+ renamed SHOW MASTER STATUS to SHOW BINARY LOG STATUS
+		String version = System.getProperty("mysql.image", "mysql:8.0");
+		boolean isMySQL84Plus = version.contains("8.4") || version.contains("8.5") || version.contains("9.");
+		String masterStatusQuery = isMySQL84Plus ? "SHOW BINARY LOG STATUS" : "show master status";
+		String slaveStatusQuery = isMySQL84Plus ? "SHOW REPLICA STATUS" : "show slave status";
+		String relayMasterLogFileColumn = isMySQL84Plus ? "Relay_Source_Log_File" : "Relay_Master_Log_File";
+		String execMasterLogPosColumn = isMySQL84Plus ? "Exec_Source_Log_Pos" : "Exec_Master_Log_Pos";
+		
+		ResultSet ms = master.query(masterStatusQuery);
 		ms.next();
 		String masterFile = ms.getString("File");
 		Long masterPos = ms.getLong("Position");
 		ms.close();
 
 		while ( true ) {
-			ResultSet rs = query("show slave status");
+			ResultSet rs = query(slaveStatusQuery);
 			rs.next();
-			if ( rs.getString("Relay_Master_Log_File").equals(masterFile) &&
-				rs.getLong("Exec_Master_Log_Pos") >= masterPos )
+			if ( rs.getString(relayMasterLogFileColumn).equals(masterFile) &&
+				rs.getLong(execMasterLogPosColumn) >= masterPos )
 				return;
 
 			Thread.sleep(200);
