@@ -197,7 +197,12 @@ public class BinaryLogClientGTIDIntegrationTest extends BinaryLogClientIntegrati
 
     private String getExecutedGtidSet(MySQLConnection master) throws SQLException {
         final String[] initialGTIDSet = new String[1];
-        master.query("show master status", new Callback<ResultSet>() {
+        // MySQL 8.4+ renamed SHOW MASTER STATUS to SHOW BINARY LOG STATUS
+        String version = System.getProperty("mysql.image", "mysql:8.0");
+        boolean isMySQL84Plus = version.contains("8.4") || version.contains("8.5") || version.contains("9.");
+        String statusQuery = isMySQL84Plus ? "SHOW BINARY LOG STATUS" : "SHOW MASTER STATUS";
+        
+        master.query(statusQuery, new Callback<ResultSet>() {
             @Override
             public void execute(ResultSet rs) throws SQLException {
                 rs.next();

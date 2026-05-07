@@ -45,20 +45,36 @@ public class GtidSet {
     }
     /**
      * @param gtidSet gtid set comprised of closed intervals (like MySQL's executed_gtid_set).
+     * Supports both legacy format (uuid:intervals) and MySQL 8.3+ tagged format (tag:uuid:intervals).
      */
     public GtidSet(String gtidSet) {
         String[] uuidSets = (gtidSet == null || gtidSet.isEmpty()) ? new String[0] :
             gtidSet.replace("\n", "").split(",");
         for (String uuidSet : uuidSets) {
-            int uuidSeparatorIndex = uuidSet.indexOf(":");
-            UUID sourceId = UUID.fromString(uuidSet.substring(0, uuidSeparatorIndex));
-            List<Interval> intervals = new ArrayList<Interval>();
-            String[] rawIntervals = uuidSet.substring(uuidSeparatorIndex + 1).split(":");
-            for (String interval : rawIntervals) {
-                String[] is = interval.split("-");
+            final String[] parts = uuidSet.split(":");
+
+            // Determine if this is a tagged GTID (tag:uuid:intervals) or legacy (uuid:intervals)
+            int uuidIndex = 0;
+            int intervalsStartIndex = 1;
+
+            // Check if first part is a tag (not a valid UUID format)
+            // UUID format: 8-4-4-4-12 hex digits with dashes
+            if (parts.length >= 3 && !isValidUuidFormat(parts[0])) {
+                // Tagged format: tag:uuid:intervals...
+                uuidIndex = 1;
+                intervalsStartIndex = 2;
+            }
+
+            final UUID sourceId = UUID.fromString(parts[uuidIndex]);
+            final List<Interval> intervals = new ArrayList<Interval>();
+
+            // Parse intervals starting from the correct index
+            for (int i = intervalsStartIndex; i < parts.length; i++) {
+                final String interval = parts[i];
+                final String[] is = interval.split("-");
                 long[] split = new long[is.length];
-                for (int i = 0, e = is.length; i < e; i++) {
-                    split[i] = Long.parseLong(is[i]);
+                for (int j = 0, e = is.length; j < e; j++) {
+                    split[j] = Long.parseLong(is[j]);
                 }
                 if (split.length == 1) {
                     split = new long[] {split[0], split[0]};
@@ -67,6 +83,17 @@ public class GtidSet {
             }
             map.put(sourceId, new UUIDSet(sourceId, intervals));
         }
+    }
+
+    /**
+     * Checks if a string matches the UUID format (8-4-4-4-12 hex digits).
+     *
+     * @param str the string to check
+     * @return true if the string is a valid UUID format, false otherwise
+     */
+    private static boolean isValidUuidFormat(final String str) {
+        // UUID format: 8-4-4-4-12 hex digits with dashes
+        return str.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     }
 
     /**
