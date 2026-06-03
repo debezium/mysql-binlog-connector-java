@@ -28,17 +28,6 @@ import java.util.UUID;
  * @author <a href="mailto:pprasse@actindo.de">Patrick Prasse</a>
  */
 public class GtidTaggedEventDataDeserializer implements EventDataDeserializer<GtidTaggedEventData> {
-    public static final int LOGICAL_TIMESTAMP_LENGTH = 8;
-    public static final int IMMEDIATE_COMMIT_TIMESTAMP_LENGTH = 7;
-    public static final int ORIGINAL_COMMIT_TIMESTAMP_LENGTH = 7;
-    public static final int ENCODED_COMMIT_TIMESTAMP_LENGTH = 55;
-    public static final int TRANSACTION_LENGTH_MIN_LENGTH = 1;
-    public static final int IMMEDIATE_SERVER_VERSION_LENGTH = 4;
-    public static final int ORIGINAL_SERVER_VERSION_LENGTH = 4;
-    public static final int ENCODED_SERVER_VERSION_LENGTH = 31;
-    public static final int COMMIT_GROUP_TICKET_LENGTH = 8;
-    public static final int UNDEFINED_SERVER_VERSION = 999999;
-    public static final int TAG_MAX_LENGTH = 32;
     private static final int SERIALIZATION_FORMAT_VERSION = 1;
 
     @Override
@@ -62,7 +51,7 @@ public class GtidTaggedEventDataDeserializer implements EventDataDeserializer<Gt
         final long transactionId = cursor.readSignedVarLong();
 
         cursor.readFieldId(3);
-        final String tag = cursor.readString(TAG_MAX_LENGTH);
+        final String tag = cursor.readString(MySqlGtid.TAG_MAX_LENGTH);
 
         final MySqlGtid gtid = new MySqlGtid(
                 tag.isEmpty() ? null : tag,

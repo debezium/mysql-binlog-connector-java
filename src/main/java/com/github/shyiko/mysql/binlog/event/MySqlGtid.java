@@ -7,6 +7,8 @@ import java.util.UUID;
  * Supports both legacy format (uuid:transaction_id) and MySQL 8.3+ tagged format (uuid:tag:transaction_id).
  */
 public class MySqlGtid {
+    public static final int TAG_MAX_LENGTH = 32;
+
     private final String tag;
     private final UUID serverId;
     private final long transactionId;
@@ -68,6 +70,12 @@ public class MySqlGtid {
                 // Backward compatibility for the previous tag-first representation.
                 tag = split[0];
                 sourceId = split[1];
+            }
+            if (tag.length() > TAG_MAX_LENGTH) {
+                throw new IllegalArgumentException(
+                    "Invalid GTID format: tag length " + tag.length() +
+                    " exceeds maximum " + TAG_MAX_LENGTH
+                );
             }
             final long transactionId = Long.parseLong(split[2]);
             return new MySqlGtid(tag, UUID.fromString(sourceId), transactionId);
