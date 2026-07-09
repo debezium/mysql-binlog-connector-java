@@ -134,10 +134,16 @@ public class PacketChannel implements Channel {
         } catch (Exception e) {
             // ignore
         }
-        try {
-            socket.shutdownOutput();
-        } catch (Exception e) {
-            // ignore
+        if (!shouldUseSoLinger0) {
+            // With SO_LINGER(0) the socket RSTs immediately on close(); skip
+            // shutdownOutput() to avoid sending a TLS close_notify that can
+            // deadlock when the SSL session is inconsistent after a TLS 1.3
+            // KeyUpdate write failure (debezium/dbz#2213).
+            try {
+                socket.shutdownOutput();
+            } catch (Exception e) {
+                // ignore
+            }
         }
         socket.close();
         shouldUseSoLinger0 = false;

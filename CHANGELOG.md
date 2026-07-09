@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+- Fix TLS 1.3 KeyUpdate causing "Connection reset by peer" on high-throughput connections
+  under Java 17+ (debezium/dbz#2213):
+  - `DefaultSSLSocketFactory` now pins the SSL socket to the requested protocol version via
+    `SSLSocket.setEnabledProtocols()`, preventing unintended TLS 1.3 negotiation.
+  - `PacketChannel.close()` skips `shutdownOutput()` when SO\_LINGER(0) is active to avoid
+    TLS close\_notify deadlocks after a KeyUpdate write failure.
+  - `BinaryLogClient` always applies SO\_LINGER(0) when closing SSL channels, so the
+    reconnect path cannot deadlock regardless of the `useNonGracefulDisconnect` flag.
+
 ## [0.30.0](https://github.com/osheroff/mysql-binlog-connector-java/compare/0.30.0...0.29.2) - 2024-08-14
 
 - Add support for MySQL 8.4

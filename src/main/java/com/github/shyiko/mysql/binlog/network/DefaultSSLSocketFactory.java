@@ -50,8 +50,15 @@ public class DefaultSSLSocketFactory implements SSLSocketFactory {
             throw new SocketException(e.getMessage());
         }
         try {
-            return (SSLSocket) sc.getSocketFactory()
+            SSLSocket sslSocket = (SSLSocket) sc.getSocketFactory()
                 .createSocket(socket, socket.getInetAddress().getHostName(), socket.getPort(), true);
+            // Pin the socket to the requested protocol version. Java 17+ can
+            // still negotiate TLS 1.3 even from a "TLSv1.2" SSLContext; TLS 1.3
+            // triggers post-handshake KeyUpdate that conflicts with concurrent
+            // keepalive writes and causes "Connection reset by peer" failures
+            // (debezium/dbz#2213).
+            sslSocket.setEnabledProtocols(new String[]{this.protocol});
+            return sslSocket;
         } catch (IOException e) {
             throw new SocketException(e.getMessage());
         }
