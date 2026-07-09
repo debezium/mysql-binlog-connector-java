@@ -1456,7 +1456,11 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private void disconnectChannel(boolean force) throws IOException {
         connected = false;
         if (channel != null && channel.isOpen()) {
-            if (force) {
+            // Always use SO_LINGER(0) for SSL channels: when the SSL session is
+            // inconsistent (e.g., after a TLS 1.3 KeyUpdate write failure) the
+            // normal graceful shutdown sends a TLS close_notify that can deadlock.
+            // SO_LINGER(0) causes an immediate TCP RST on close().
+            if (force || channel.isSSL()) {
                 channel.setShouldUseSoLinger0();
             }
             channel.close();
