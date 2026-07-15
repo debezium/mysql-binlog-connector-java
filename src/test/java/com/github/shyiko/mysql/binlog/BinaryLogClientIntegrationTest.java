@@ -336,14 +336,27 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
         } catch (SQLSyntaxErrorException e) {
             throw new SkipException("MySQL < 5.6.4+");
         }
-        assertEquals(writeAndCaptureRow("datetime(0)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
-            generateTime(1989, 3, 21, 1, 2, 4, 0)});
-        assertEquals(writeAndCaptureRow("datetime(1)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
-            generateTime(1989, 3, 21, 1, 2, 3, 800)});
-        assertEquals(writeAndCaptureRow("datetime(2)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
-            generateTime(1989, 3, 21, 1, 2, 3, 780)});
-        assertEquals(writeAndCaptureRow("datetime(3)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
-            generateTime(1989, 3, 21, 1, 2, 3, 778)});
+        if (mysqlVersion.isMaria) {
+            // MariaDB truncates fractional seconds
+            assertEquals(writeAndCaptureRow("datetime(0)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
+                generateTime(1989, 3, 21, 1, 2, 3, 0)});
+            assertEquals(writeAndCaptureRow("datetime(1)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
+                generateTime(1989, 3, 21, 1, 2, 3, 700)});
+            assertEquals(writeAndCaptureRow("datetime(2)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
+                generateTime(1989, 3, 21, 1, 2, 3, 770)});
+            assertEquals(writeAndCaptureRow("datetime(3)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
+                generateTime(1989, 3, 21, 1, 2, 3, 777)});
+        } else {
+            // MySQL rounds them
+            assertEquals(writeAndCaptureRow("datetime(0)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
+                generateTime(1989, 3, 21, 1, 2, 4, 0)});
+            assertEquals(writeAndCaptureRow("datetime(1)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
+                generateTime(1989, 3, 21, 1, 2, 3, 800)});
+            assertEquals(writeAndCaptureRow("datetime(2)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
+                generateTime(1989, 3, 21, 1, 2, 3, 780)});
+            assertEquals(writeAndCaptureRow("datetime(3)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
+                generateTime(1989, 3, 21, 1, 2, 3, 778)});
+        }
         assertEquals(writeAndCaptureRow("datetime(3)", "'1989-03-21 01:02:03.777'"), new Serializable[]{
             generateTime(1989, 3, 21, 1, 2, 3, 777)});
         assertEquals(writeAndCaptureRow("datetime(4)", "'1989-03-21 01:02:03.777777'"), new Serializable[]{
