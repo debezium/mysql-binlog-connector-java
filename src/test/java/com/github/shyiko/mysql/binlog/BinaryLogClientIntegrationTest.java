@@ -807,9 +807,17 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                         statement.execute("flush logs");
                     }
                 });
-                eventListener.waitForAtLeast(EventType.QUERY, 1, DEFAULT_TIMEOUT);
-                eventListener.waitFor(EventType.ROTATE, 3, DEFAULT_TIMEOUT); /* 2 with timestamp 0 */
-                eventListener.waitFor(ByteArrayEventData.class, 5, DEFAULT_TIMEOUT);
+                if (mysqlVersion.isMaria) {
+                    // MariaDB used GTID_EVENT instead of BEGIN to start new transaction, see
+                    // https://mariadb.com/docs/server/reference/clientserver-protocol/replication-protocol/gtid_event
+                    eventListener.waitFor(EventType.ROTATE, 3, DEFAULT_TIMEOUT); /* 2 with timestamp 0 */
+                    eventListener.waitFor(ByteArrayEventData.class, 4, DEFAULT_TIMEOUT);
+                }
+                else {
+                    eventListener.waitForAtLeast(EventType.QUERY, 1, DEFAULT_TIMEOUT);
+                    eventListener.waitFor(EventType.ROTATE, 3, DEFAULT_TIMEOUT); /* 2 with timestamp 0 */
+                    eventListener.waitFor(ByteArrayEventData.class, 5, DEFAULT_TIMEOUT);
+                }
             } finally {
                 binaryLogClient.disconnect();
             }
