@@ -67,6 +67,7 @@ public class TestDatabaseContainer {
             commands.add("--server-id=" + options.serverID);
             commands.add("--default-time-zone=+00:00");
             commands.add("--max_allowed_packet=16M");
+            commands.add("--log-slave-updates=ON");
 
             if (options.extraParams != null && !options.extraParams.isEmpty()) {
                 String[] extraParamArray = options.extraParams.trim().split("\\s+");

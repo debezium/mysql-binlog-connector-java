@@ -82,10 +82,7 @@ public abstract class AbstractIntegrationTest {
         // Wait for slave to replicate the commands from master
         slaveContainer.waitForSlaveToBeCurrent(masterContainer);
 
-        // MariaDB doesn't always generate QUERY events for DDL in the same way as MySQL
-        if (!mysqlVersion.isMaria) {
-            eventListener.waitFor(EventType.QUERY, 2, BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
-        }
+        eventListener.waitFor(EventType.QUERY, 2, BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
 
         if ( mysqlVersion.atLeast(8, 0) ) {
             setupMysql8Login(master);
