@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Prevent the keepalive thread from tearing down a connection that is still waiting for its
+  first event (debezium/dbz#2266): with heartbeats enabled, the event-staleness check now
+  applies only once the current connection has started streaming. Until then the socket is
+  probed with a ping, so a position lookup that takes longer than `keepAliveInterval`
+  (e.g. GTID auto-positioning over a large number of retained binlog files) no longer
+  causes a permanent reconnect loop that never consumes any events.
 - Fix TLS 1.3 KeyUpdate causing "Connection reset by peer" on high-throughput connections
   under Java 17+ (debezium/dbz#2213):
   - `DefaultSSLSocketFactory` now pins the SSL socket to the requested protocol version via

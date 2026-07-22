@@ -423,6 +423,110 @@ public class BinaryLogClientTest {
         serverSocket.close();
     }
 
+    /**
+     * Builds a PacketChannel over a stub socket. When {@code writable} is false every write
+     * fails with an IOException, emulating a broken connection.
+     */
+    private static PacketChannel stubChannel(final boolean writable) throws IOException {
+        return new PacketChannel(new Socket() {
+            @Override
+            public InputStream getInputStream() throws IOException {
+                return new InputStream() {
+                    @Override
+                    public int read() throws IOException {
+                        return -1;
+                    }
+                };
+            }
+
+            @Override
+            public OutputStream getOutputStream() throws IOException {
+                return new OutputStream() {
+                    @Override
+                    public void write(int b) throws IOException {
+                        if (!writable) {
+                            throw new IOException("test: broken pipe");
+                        }
+                    }
+                };
+            }
+        });
+    }
+
+    /**
+     * With heartbeats enabled, the keepalive thread must not declare a connection lost before the
+     * first event of that connection has arrived, no matter how stale eventLastSeen is: after
+     * COM_BINLOG_DUMP(_GTID) the server may take longer than keepAliveInterval to locate the
+     * requested position (e.g. GTID auto-positioning over a large number of binlog files), during
+     * which it sends neither events nor heartbeats. Tearing the connection down then restarts the
+     * position search from scratch, so the client would reconnect forever without ever streaming
+     * (debezium/dbz#2266).
+     */
+    @Test
+    public void testKeepAliveToleratesSilenceWhileAwaitingFirstEvent() throws IOException {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setHeartbeatInterval(80);
+        client.setKeepAliveInterval(100);
+        // eventSeenSinceConnect defaults to false and eventLastSeen to 0, i.e. arbitrarily stale
+        client.channel = stubChannel(true);
+        assertFalse(client.isConnectionLost(),
+            "a connection awaiting its first event must not be considered lost while its socket is writable");
+    }
+
+    /**
+     * A connection that is still awaiting its first event is probed with a ping, so a socket that
+     * is actually broken during the position-resolution phase is still detected as lost.
+     */
+    @Test
+    public void testKeepAliveDetectsBrokenSocketWhileAwaitingFirstEvent() throws IOException {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setHeartbeatInterval(80);
+        client.setKeepAliveInterval(100);
+        client.channel = stubChannel(false);
+        assertTrue(client.isConnectionLost(),
+            "a broken socket must be detected even before the first event is received");
+    }
+
+    /**
+     * Once the first event of the current connection has been seen, the original behavior applies:
+     * with heartbeats enabled the connection is considered lost when no event has been received for
+     * more than keepAliveInterval.
+     */
+    @Test
+    public void testKeepAliveReconnectsWhenEstablishedStreamGoesSilent() throws IOException {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setHeartbeatInterval(80);
+        client.channel = stubChannel(true);
+        client.eventSeenSinceConnect = true;
+        // eventLastSeen is 0, so the stream is stale for any realistic interval...
+        client.setKeepAliveInterval(1);
+        assertTrue(client.isConnectionLost(),
+            "an established stream that went silent for longer than keepAliveInterval must reconnect");
+        // ...but not when the interval exceeds the time elapsed since epoch
+        client.setKeepAliveInterval(Long.MAX_VALUE);
+        assertFalse(client.isConnectionLost(),
+            "an established stream within keepAliveInterval must not reconnect");
+    }
+
+    /**
+     * With heartbeats disabled the keepalive has always probed the connection with a ping and
+     * never consulted event staleness; that behavior must be preserved by the extracted
+     * decision logic.
+     */
+    @Test
+    public void testKeepAlivePingsWhenHeartbeatsDisabled() throws IOException {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        // heartbeatInterval stays 0; eventLastSeen is 0, i.e. stale for any interval
+        client.setKeepAliveInterval(1);
+        client.eventSeenSinceConnect = true;
+        client.channel = stubChannel(true);
+        assertFalse(client.isConnectionLost(),
+            "with heartbeats disabled a writable socket must not be considered lost, however stale eventLastSeen is");
+        client.channel = stubChannel(false);
+        assertTrue(client.isConnectionLost(),
+            "with heartbeats disabled a broken socket must be considered lost");
+    }
+
     /*
     @Test
     public void testDeadlockyCode() throws IOException, InterruptedException {
