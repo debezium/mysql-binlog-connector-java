@@ -166,6 +166,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
     private long heartbeatInterval;
     private volatile long eventLastSeen;
+    // visible for testing
+    volatile boolean eventSeenSinceConnect;
 
     private long connectTimeout = TimeUnit.SECONDS.toMillis(3);
 
@@ -656,6 +658,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 setupConnection();
                 gtid = null;
                 tx = false;
+                eventSeenSinceConnect = false;
                 requestBinaryLogStream();
             } catch (IOException e) {
                 disconnectChannel();
@@ -923,6 +926,32 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         ensureEventDataDeserializer(EventType.MARIADB_GTID_LIST, MariadbGtidListEventDataDeserializer.class);
     }
 
+    /**
+     * Decides whether the keepalive thread should consider the connection lost and force a reconnect.
+     * <p>
+     * The event-staleness check is only applied to an established stream. After
+     * COM_BINLOG_DUMP(_GTID) the server may spend an arbitrarily long time locating the requested
+     * position before it sends the first event or heartbeat (e.g. GTID auto-positioning scans the
+     * Previous_gtids header of every binlog file from the newest backward to the resume point).
+     * Declaring the connection lost during that phase would tear it down mid-search and restart the
+     * search from scratch on reconnect, so a client that is far enough behind would loop forever
+     * without ever receiving an event (debezium/dbz#2266). Until the first event of the current
+     * connection is seen, the socket is probed with a ping instead — it fails only if the
+     * connection is actually broken.
+     */
+    // visible for testing
+    boolean isConnectionLost() {
+        if (heartbeatInterval > 0 && eventSeenSinceConnect) {
+            return System.currentTimeMillis() - eventLastSeen > keepAliveInterval;
+        }
+        try {
+            channel.write(new PingCommand());
+            return false;
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
     private void spawnKeepAliveThread() {
         final ExecutorService threadExecutor =
             Executors.newSingleThreadExecutor(new ThreadFactory() {
@@ -947,17 +976,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                             logger.info("threadExecutor is shut down, terminating keepalive thread");
                             return;
                         }
-                        boolean connectionLost = false;
-                        if (heartbeatInterval > 0) {
-                            connectionLost = System.currentTimeMillis() - eventLastSeen > keepAliveInterval;
-                        } else {
-                            try {
-                                channel.write(new PingCommand());
-                            } catch (IOException e) {
-                                connectionLost = true;
-                            }
-                        }
-                        if (connectionLost) {
+                        if (isConnectionLost()) {
                             logger.info("Keepalive: Trying to restore lost connection to " + hostname + ":" + port);
                             try {
                                 terminateConnect(useNonGracefulDisconnect);
@@ -1158,6 +1177,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 }
                 if (isConnected()) {
                     eventLastSeen = System.currentTimeMillis();
+                    eventSeenSinceConnect = true;
                     updateGtidSet(event);
                     notifyEventListeners(event);
                     updateClientBinlogFilenameAndPosition(event);
