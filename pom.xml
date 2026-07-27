@@ -4,7 +4,7 @@
 
     <groupId>io.debezium</groupId>
     <artifactId>mysql-binlog-connector-java</artifactId>
-    <version>0.41.0</version>
+    <version>0.41.1</version>
 
     <name>mysql-binlog-connector-java</name>
     <description>MySQL Binary Log connector</description>
@@ -44,7 +44,7 @@
         <version.awaitility>4.3.0</version.awaitility>
         <version.mysql.driver>9.1.0</version.mysql.driver>
         <version.mariadb.driver>3.5.3</version.mariadb.driver>
-        <version.central.publishing.plugin>0.7.0</version.central.publishing.plugin>
+        <version.central.publishing.plugin>0.11.0</version.central.publishing.plugin>
 
         <!-- Publishing -->
         <publish.snapshot.url>https://central.sonatype.com/repository/maven-snapshots/</publish.snapshot.url>
