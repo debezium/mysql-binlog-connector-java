@@ -99,4 +99,10 @@ public class BinaryLogClientBinlogCompressIntegrationTest extends BinaryLogClien
     public void testBinlogPositionPointsToTableMapEventUntilTheEndOfLogicalGroup() throws Exception {
         throw new SkipException("Skipped due to binlog compression");
     }
+
+    @Test
+    @Override
+    public void testKeepAliveReplaysIncompleteNonGtidTransaction() throws Exception {
+        throw new SkipException("Skipped due to binlog compression");
+    }
 }
