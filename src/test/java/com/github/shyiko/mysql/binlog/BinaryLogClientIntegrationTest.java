@@ -61,9 +61,12 @@ import java.util.AbstractMap;
 import java.util.Base64;
 import java.util.BitSet;
 import java.util.Calendar;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.ResourceBundle;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -700,6 +703,94 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
             }
         } finally {
             tcpReverseProxy.unbind();
+        }
+    }
+
+    @Test(timeOut = 30000)
+    public void testKeepAliveReplaysIncompleteNonGtidTransaction() throws Exception {
+        master.execute(new Callback<Statement>() {
+            @Override
+            public void execute(Statement statement) throws SQLException {
+                statement.execute("drop table if exists mbcj_test.keepalive_replay");
+                statement.execute("create table mbcj_test.keepalive_replay (id int primary key)");
+            }
+        });
+        slaveContainer.waitForSlaveToBeCurrent(masterContainer);
+
+        final BinaryLogClient replayingClient = new BinaryLogClient(slave.hostname, slave.port,
+                slave.username, slave.password);
+        replayingClient.setHeartbeatInterval(100);
+        replayingClient.setKeepAliveInterval(300);
+        replayingClient.setConnectTimeout(3000);
+
+        final Set<Integer> receivedIds = Collections.synchronizedSet(new HashSet<Integer>());
+        final AtomicBoolean interruptFirstRowsEvent = new AtomicBoolean(true);
+        final AtomicLong connectionCount = new AtomicLong();
+        final CountDownLatch firstRowsEventInterrupted = new CountDownLatch(1);
+        final CountDownLatch reconnected = new CountDownLatch(1);
+        final CountDownLatch allRowsReceived = new CountDownLatch(1);
+
+        replayingClient.registerLifecycleListener(new BinaryLogClient.AbstractLifecycleListener() {
+            @Override
+            public void onConnect(BinaryLogClient client) {
+                if (connectionCount.incrementAndGet() > 1) {
+                    reconnected.countDown();
+                }
+            }
+        });
+        replayingClient.registerEventListener(new BinaryLogClient.EventListener() {
+            @Override
+            public void onEvent(Event event) {
+                if (!(event.getData() instanceof WriteRowsEventData)) {
+                    return;
+                }
+                List<Serializable[]> rows = ((WriteRowsEventData) event.getData()).getRows();
+                if (interruptFirstRowsEvent.compareAndSet(true, false)) {
+                    assertTrue(rows.size() > 20);
+                    int deliveredRows = Math.min(20, rows.size());
+                    for (int i = 0; i < deliveredRows; i++) {
+                        receivedIds.add(((Number) rows.get(i)[0]).intValue());
+                    }
+                    firstRowsEventInterrupted.countDown();
+                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    while (replayingClient.isConnected() && System.nanoTime() < deadline) {
+                        Thread.yield();
+                    }
+                    return;
+                }
+                for (Serializable[] row : rows) {
+                    receivedIds.add(((Number) row[0]).intValue());
+                }
+                if (receivedIds.size() == 500) {
+                    allRowsReceived.countDown();
+                }
+            }
+        });
+
+        try {
+            replayingClient.connect(DEFAULT_TIMEOUT);
+            master.execute(new Callback<Statement>() {
+                @Override
+                public void execute(Statement statement) throws SQLException {
+                    StringBuilder insert = new StringBuilder(
+                            "insert into mbcj_test.keepalive_replay values ");
+                    for (int i = 1; i <= 500; i++) {
+                        if (i > 1) {
+                            insert.append(',');
+                        }
+                        insert.append('(').append(i).append(')');
+                    }
+                    statement.execute(insert.toString());
+                }
+            });
+
+            assertTrue(firstRowsEventInterrupted.await(5, TimeUnit.SECONDS));
+            assertTrue(reconnected.await(10, TimeUnit.SECONDS));
+            assertTrue(allRowsReceived.await(10, TimeUnit.SECONDS));
+            assertEquals(receivedIds.size(), 500);
+        }
+        finally {
+            replayingClient.disconnect();
         }
     }
 
