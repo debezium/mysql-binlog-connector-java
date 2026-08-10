@@ -49,6 +49,7 @@ import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.event.GtidEventData;
 import com.github.shyiko.mysql.binlog.event.GtidTaggedEventData;
 import com.github.shyiko.mysql.binlog.event.MySqlGtid;
+import com.github.shyiko.mysql.binlog.event.QueryEventData;
 import com.github.shyiko.mysql.binlog.event.XidEventData;
 import com.github.shyiko.mysql.binlog.jmx.BinaryLogClientStatistics;
 import com.github.shyiko.mysql.binlog.network.SSLSocketFactory;
@@ -719,6 +720,69 @@ public class BinaryLogClientTest {
         assertEquals(failures.size(), 1);
         assertNotNull(failures.get(0).getCause());
         assertEquals(failures.get(0).getCause().getMessage(), "test: oversized packet");
+    }
+
+    @Test
+    public void testKeepAliveRewindsIncompleteNonGtidTransaction() {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setBinlogFilename("mysql-bin.000001");
+        client.setBinlogPosition(100);
+
+        QueryEventData queryEventData = new QueryEventData();
+        queryEventData.setSql("BEGIN");
+        EventHeaderV4 eventHeader = new EventHeaderV4();
+        eventHeader.setEventType(EventType.QUERY);
+        eventHeader.setEventLength(50);
+        eventHeader.setNextPosition(150);
+        client.updateNonGtidTransactionStateBeforeEvent(new Event(eventHeader, queryEventData));
+
+        client.setBinlogPosition(300);
+        client.rewindToTransactionStartIfNeeded();
+
+        assertEquals(client.getBinlogFilename(), "mysql-bin.000001");
+        assertEquals(client.getBinlogPosition(), 100L);
+    }
+
+    @Test
+    public void testKeepAliveDoesNotRewindCompletedNonGtidTransaction() {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setBinlogFilename("mysql-bin.000001");
+        client.setBinlogPosition(100);
+
+        QueryEventData queryEventData = new QueryEventData();
+        queryEventData.setSql("BEGIN");
+        EventHeaderV4 beginHeader = new EventHeaderV4();
+        beginHeader.setEventType(EventType.QUERY);
+        beginHeader.setEventLength(50);
+        beginHeader.setNextPosition(150);
+        client.updateNonGtidTransactionStateBeforeEvent(new Event(beginHeader, queryEventData));
+
+        EventHeaderV4 xidHeader = new EventHeaderV4();
+        xidHeader.setEventType(EventType.XID);
+        client.updateNonGtidTransactionStateAfterEvent(new Event(xidHeader, null));
+        client.setBinlogPosition(300);
+        client.rewindToTransactionStartIfNeeded();
+
+        assertEquals(client.getBinlogPosition(), 300L);
+    }
+
+    @Test
+    public void testKeepAliveDoesNotRewindCompressedNonGtidTransaction() {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setBinlogFilename("mysql-bin.000001");
+        client.setBinlogPosition(100);
+
+        EventHeaderV4 anonymousGtidHeader = new EventHeaderV4();
+        anonymousGtidHeader.setEventType(EventType.ANONYMOUS_GTID);
+        client.updateNonGtidTransactionStateBeforeEvent(new Event(anonymousGtidHeader, null));
+
+        EventHeaderV4 transactionPayloadHeader = new EventHeaderV4();
+        transactionPayloadHeader.setEventType(EventType.TRANSACTION_PAYLOAD);
+        client.updateNonGtidTransactionStateAfterEvent(new Event(transactionPayloadHeader, null));
+        client.setBinlogPosition(300);
+        client.rewindToTransactionStartIfNeeded();
+
+        assertEquals(client.getBinlogPosition(), 300L);
     }
 
     /*

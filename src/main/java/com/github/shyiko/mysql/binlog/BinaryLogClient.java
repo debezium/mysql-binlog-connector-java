@@ -158,6 +158,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private boolean useBinlogFilenamePositionInGtidMode;
     protected Object gtid;
     private boolean tx;
+    private volatile String transactionStartFilename;
+    private volatile long transactionStartPosition;
 
     private EventDeserializer eventDeserializer = new EventDeserializer();
 
@@ -741,6 +743,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 spawnKeepAliveThread();
             }
             ensureEventDataDeserializer(EventType.ROTATE, RotateEventDataDeserializer.class);
+            ensureEventDataDeserializer(EventType.QUERY, QueryEventDataDeserializer.class);
             synchronized (gtidSetAccessLock) {
                 if (this.gtidEnabled) {
                     ensureGtidEventDataDeserializer();
@@ -1047,6 +1050,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 logger.info("Keepalive: Trying to restore lost connection to " + hostname + ":" + port);
                 try {
                     terminateConnect(useNonGracefulDisconnect);
+                    rewindToTransactionStartIfNeeded();
                     connect(connectTimeout);
                     failedReconnects = 0;
                 } catch (Exception ce) {
@@ -1266,9 +1270,11 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                     eventLastSeen = System.currentTimeMillis();
                     eventSeenSinceConnect = true;
                     rewriteWrappedNextPosition(event);
+                    updateNonGtidTransactionStateBeforeEvent(event);
                     updateGtidSet(event);
                     notifyEventListeners(event);
                     updateClientBinlogFilenameAndPosition(event);
+                    updateNonGtidTransactionStateAfterEvent(event);
                 }
             }
         } catch (Exception e) {
@@ -1360,6 +1366,66 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 binlogPosition = nextBinlogPosition;
             }
         }
+    }
+
+    // visible for testing
+    void updateNonGtidTransactionStateBeforeEvent(Event event) {
+        synchronized (gtidSetAccessLock) {
+            if (gtidEnabled) {
+                return;
+            }
+        }
+        if (!(event.getHeader() instanceof EventHeaderV4)) {
+            return;
+        }
+        EventType eventType = event.getHeader().getEventType();
+        if (eventType == EventType.ANONYMOUS_GTID) {
+            EventHeaderV4 eventHeader = (EventHeaderV4) event.getHeader();
+            transactionStartFilename = binlogFilename;
+            transactionStartPosition = eventHeader.getPosition();
+        }
+        else if (eventType == EventType.QUERY) {
+            QueryEventData queryEventData = (QueryEventData) EventDataWrapper.internal(event.getData());
+            if ("BEGIN".equals(queryEventData.getSql())) {
+                tx = true;
+                if (transactionStartFilename == null) {
+                    EventHeaderV4 eventHeader = (EventHeaderV4) event.getHeader();
+                    transactionStartFilename = binlogFilename;
+                    transactionStartPosition = eventHeader.getPosition();
+                }
+            }
+        }
+    }
+
+    // visible for testing
+    void rewindToTransactionStartIfNeeded() {
+        if (transactionStartFilename != null) {
+            logger.info("Keepalive: Replaying incomplete transaction from " +
+                transactionStartFilename + "/" + transactionStartPosition);
+            binlogFilename = transactionStartFilename;
+            binlogPosition = transactionStartPosition;
+        }
+    }
+
+    // visible for testing
+    void updateNonGtidTransactionStateAfterEvent(Event event) {
+        EventType eventType = event.getHeader().getEventType();
+        if (eventType == EventType.XID || eventType == EventType.TRANSACTION_PAYLOAD) {
+            clearNonGtidTransactionState();
+        }
+        else if (eventType == EventType.QUERY) {
+            QueryEventData queryEventData = (QueryEventData) EventDataWrapper.internal(event.getData());
+            String sql = queryEventData.getSql();
+            if ("COMMIT".equals(sql) || "ROLLBACK".equals(sql) ||
+                (!"BEGIN".equals(sql) && !tx)) {
+                clearNonGtidTransactionState();
+            }
+        }
+    }
+
+    private void clearNonGtidTransactionState() {
+        tx = false;
+        transactionStartFilename = null;
     }
 
     protected void updateGtidSet(Event event) {
