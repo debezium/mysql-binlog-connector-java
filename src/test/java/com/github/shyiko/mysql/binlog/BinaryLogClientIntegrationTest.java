@@ -747,11 +747,12 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                 List<Serializable[]> rows = ((WriteRowsEventData) event.getData()).getRows();
                 if (interruptFirstRowsEvent.compareAndSet(true, false)) {
                     assertTrue(rows.size() > 20);
-                    int deliveredRows = Math.min(20, rows.size());
-                    for (int i = 0; i < deliveredRows; i++) {
+                    for (int i = 0; i < 20; i++) {
                         receivedIds.add(((Number) rows.get(i)[0]).intValue());
                     }
                     firstRowsEventInterrupted.countDown();
+                    // Keep the listener blocked until keepalive disconnects to reproduce DBZ-2359. This lets the
+                    // connection expire before the current rows event advances the binlog position.
                     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
                     while (replayingClient.isConnected() && System.nanoTime() < deadline) {
                         Thread.yield();

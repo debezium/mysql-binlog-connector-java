@@ -1379,10 +1379,10 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             return;
         }
         EventType eventType = event.getHeader().getEventType();
-        if (eventType == EventType.ANONYMOUS_GTID) {
+        if (eventType == EventType.ANONYMOUS_GTID || eventType == EventType.MARIADB_GTID) {
             EventHeaderV4 eventHeader = (EventHeaderV4) event.getHeader();
-            transactionStartFilename = binlogFilename;
             transactionStartPosition = eventHeader.getPosition();
+            transactionStartFilename = binlogFilename;
         }
         else if (eventType == EventType.QUERY) {
             QueryEventData queryEventData = (QueryEventData) EventDataWrapper.internal(event.getData());
@@ -1390,8 +1390,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 tx = true;
                 if (transactionStartFilename == null) {
                     EventHeaderV4 eventHeader = (EventHeaderV4) event.getHeader();
-                    transactionStartFilename = binlogFilename;
                     transactionStartPosition = eventHeader.getPosition();
+                    transactionStartFilename = binlogFilename;
                 }
             }
         }
@@ -1399,11 +1399,13 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
     // visible for testing
     void rewindToTransactionStartIfNeeded() {
-        if (transactionStartFilename != null) {
+        String filename = transactionStartFilename;
+        if (filename != null) {
+            long position = transactionStartPosition;
             logger.info("Keepalive: Replaying incomplete transaction from " +
-                transactionStartFilename + "/" + transactionStartPosition);
-            binlogFilename = transactionStartFilename;
-            binlogPosition = transactionStartPosition;
+                filename + "/" + position);
+            binlogFilename = filename;
+            binlogPosition = position;
         }
     }
 
@@ -1426,6 +1428,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private void clearNonGtidTransactionState() {
         tx = false;
         transactionStartFilename = null;
+        transactionStartPosition = 0;
     }
 
     protected void updateGtidSet(Event event) {
