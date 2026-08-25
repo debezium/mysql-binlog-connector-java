@@ -21,6 +21,7 @@ import com.github.shyiko.mysql.binlog.event.EventHeader;
 import com.github.shyiko.mysql.binlog.event.EventHeaderV4;
 import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.event.GtidEventData;
+import com.github.shyiko.mysql.binlog.event.GtidTaggedEventData;
 import com.github.shyiko.mysql.binlog.event.MariadbGtidEventData;
 import com.github.shyiko.mysql.binlog.event.MariadbGtidListEventData;
 import com.github.shyiko.mysql.binlog.event.QueryEventData;
@@ -1151,8 +1152,10 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                     throw new ServerException(errorPacket.getErrorMessage(), errorPacket.getErrorCode(),
                         errorPacket.getSqlState());
                 }
-                if (marker == 0xFE && !blocking) {
-                    completeShutdown = true;
+                if (marker == 0xFE) {
+                    if (!blocking) {
+                        completeShutdown = true;
+                    }
                     break;
                 }
                 Event event;
@@ -1242,6 +1245,10 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             case GTID:
                 GtidEventData gtidEventData = (GtidEventData) EventDataWrapper.internal(event.getData());
                 gtid = gtidEventData.getMySqlGtid();
+                break;
+            case GTID_TAGGED:
+                GtidTaggedEventData gtidTaggedEventData = (GtidTaggedEventData) EventDataWrapper.internal(event.getData());
+                gtid = gtidTaggedEventData.getMySqlGtid();
                 break;
             case XID:
                 commitGtid();
