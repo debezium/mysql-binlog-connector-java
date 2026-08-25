@@ -255,7 +255,8 @@ public class GtidSetTest {
             "24bc7850-2c16-11e6-a073-0242ac110002:1-5:testtag:7-9:othertag:6"
         );
 
-        assertEquals(gtidSet.toString(), "24bc7850-2c16-11e6-a073-0242ac110002:1-5:testtag:7-9:othertag:6-6");
+        // Tags are emitted in alphabetical order (othertag < testtag), untagged first.
+        assertEquals(gtidSet.toString(), "24bc7850-2c16-11e6-a073-0242ac110002:1-5:othertag:6-6:testtag:7-9");
     }
 
     @Test
@@ -330,4 +331,71 @@ public class GtidSetTest {
         assertEquals(gtidSet.toString(), "24bc7850-2c16-11e6-a073-0242ac110002:tag:1-5");
     }
 
+    /**
+     * When a tagged interval is added before an untagged interval for the same UUID,
+     * {@code toString()} must still emit the untagged interval first. MySQL's
+     * {@code SET @@GLOBAL.gtid_purged} and {@code CHANGE MASTER TO} commands require
+     * this ordering.
+     */
+    @Test
+    public void testToStringAlwaysEmitsUntaggedIntervalBeforeTaggedForSameUuid() {
+        final GtidSet gtidSet = new GtidSet("");
+        // Add the tagged entry FIRST (the degenerate / adversarial order)
+        gtidSet.addGtid(MySqlGtid.fromString(UUID + ":prod:3"));
+        // Then add the untagged entry
+        gtidSet.addGtid(MySqlGtid.fromString(UUID + ":1"));
+
+        // toString() groups all entries for the same UUID into one string:
+        //   uuid:untagged_intervals:tag:tagged_intervals
+        // e.g. 24bc7850-...:1-1:prod:3-3
+        final String result = gtidSet.toString();
+        final int untaggedIndex = result.indexOf(":1-1");
+        final int taggedIndex = result.indexOf(":prod:");
+        assertTrue(untaggedIndex >= 0, "toString() must contain the untagged interval: " + result);
+        assertTrue(taggedIndex >= 0, "toString() must contain the tagged interval: " + result);
+        assertTrue(untaggedIndex < taggedIndex,
+            "Untagged interval must appear before tagged interval in toString() output: " + result);
+    }
+
+    /**
+     * When the natural insertion order already puts the untagged entry first (the common case),
+     * {@code toString()} must also be correct and stable.
+     */
+    @Test
+    public void testToStringNaturalOrderUntaggedBeforeTagged() {
+        // Untagged added first — the common path; ordering must be preserved.
+        final GtidSet gtidSet = new GtidSet(UUID + ":1-5," + UUID + ":mytag:10-15");
+
+        final String result = gtidSet.toString();
+        final int untaggedIndex = result.indexOf(UUID + ":1-5");
+        final int taggedIndex = result.indexOf(":mytag:");
+        assertTrue(untaggedIndex >= 0, "toString() must contain the untagged interval");
+        assertTrue(taggedIndex >= 0, "toString() must contain the tagged interval");
+        assertTrue(untaggedIndex < taggedIndex,
+            "Untagged interval must appear before tagged interval: " + result);
+    }
+
+    /**
+     * When multiple tags are present for the same UUID, untagged must still come first,
+     * followed by tagged entries in their natural sort order.
+     */
+    @Test
+    public void testToStringMultipleTagsUntaggedFirst() {
+        final GtidSet gtidSet = new GtidSet("");
+        // Insert in adversarial order: z-tag, then a-tag, then untagged
+        gtidSet.addGtid(MySqlGtid.fromString(UUID + ":ztag:5"));
+        gtidSet.addGtid(MySqlGtid.fromString(UUID + ":atag:3"));
+        gtidSet.addGtid(MySqlGtid.fromString(UUID + ":1"));
+
+        final String result = gtidSet.toString();
+        final int untaggedIndex = result.indexOf(UUID + ":1-1");
+        assertTrue(untaggedIndex >= 0, "toString() must contain the untagged interval: " + result);
+        // Both tagged entries must come after the untagged one within the UUID group
+        final int atagIndex = result.indexOf(":atag:");
+        final int ztagIndex = result.indexOf(":ztag:");
+        assertTrue(untaggedIndex < atagIndex,
+            "Untagged must precede :atag: in: " + result);
+        assertTrue(untaggedIndex < ztagIndex,
+            "Untagged must precede :ztag: in: " + result);
+    }
 }

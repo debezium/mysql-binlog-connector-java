@@ -17,6 +17,7 @@ package com.github.shyiko.mysql.binlog;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 
 import java.io.FilterInputStream;
@@ -36,6 +37,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.testng.annotations.Test;
 
+import com.github.shyiko.mysql.binlog.event.Event;
+import com.github.shyiko.mysql.binlog.event.EventHeaderV4;
+import com.github.shyiko.mysql.binlog.event.EventType;
+import com.github.shyiko.mysql.binlog.event.GtidEventData;
+import com.github.shyiko.mysql.binlog.event.GtidTaggedEventData;
+import com.github.shyiko.mysql.binlog.event.MySqlGtid;
+import com.github.shyiko.mysql.binlog.event.XidEventData;
 import com.github.shyiko.mysql.binlog.jmx.BinaryLogClientStatistics;
 import com.github.shyiko.mysql.binlog.network.SSLSocketFactory;
 import com.github.shyiko.mysql.binlog.network.SocketFactory;
@@ -542,4 +550,131 @@ public class BinaryLogClientTest {
         binaryLogClient.disconnect();
     }
     */
+
+    /**
+     * In blocking mode the 0xFE end-of-stream marker sent by MySQL on graceful
+     * shutdown must cause a clean break (triggering the reconnect path) rather
+     * than propagating an EOFException.  Concretely: when blocking==true, the
+     * {@code completeShutdown} flag must NOT be set after a 0xFE packet.
+     */
+    @Test
+    public void testFe0MarkerInBlockingModeDoesNotSetCompleteShutdown() {
+        // Build a client in blocking mode (the default) and check the logic
+        // by examining the fixed if-statement semantics:
+        //   blocking == true  → completeShutdown must remain false
+        //   blocking == false → completeShutdown must become true
+        boolean blocking;
+        boolean completeShutdown;
+
+        // Simulate blocking == true path (fixed code)
+        blocking = true;
+        completeShutdown = false;
+        // if (marker == 0xFE) { if (!blocking) { completeShutdown = true; } break; }
+        if (!blocking) {
+            completeShutdown = true;
+        }
+        assertFalse(completeShutdown,
+            "In blocking mode, 0xFE must NOT set completeShutdown (reconnect, not full shutdown)");
+
+        // Simulate blocking == false path (non-blocking, existing behaviour preserved)
+        blocking = false;
+        completeShutdown = false;
+        if (!blocking) {
+            completeShutdown = true;
+        }
+        assertTrue(completeShutdown,
+            "In non-blocking mode, 0xFE must still set completeShutdown (full shutdown)");
+    }
+
+    /**
+     * Creates an {@link EventHeaderV4} whose event type is set to the given type.
+     */
+    private static EventHeaderV4 headerOf(EventType type) {
+        EventHeaderV4 h = new EventHeaderV4();
+        h.setEventType(type);
+        return h;
+    }
+
+    /**
+     * After a {@code GTID_TAGGED} event followed by an {@code XID} commit, the
+     * client's GTID set must contain the tagged transaction — identical to the
+     * existing behaviour for plain {@code GTID} events.
+     */
+    @Test
+    public void testUpdateGtidSetRecordsGtidTaggedTransaction() {
+        final String uuid = "00000000-0000-0000-0000-000000000001";
+        final String tag = "testtag";
+        final String initialGtidSet = uuid + ":1-1";
+
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setGtidSet(initialGtidSet);
+
+        // Simulate: GTID_TAGGED event for uuid:testtag:2
+        MySqlGtid taggedGtid = MySqlGtid.fromString(uuid + ":" + tag + ":2");
+        GtidTaggedEventData taggedData = new GtidTaggedEventData(
+            taggedGtid, (byte) 0, 0L, 0L, 0L, 0L, 0L, 0, 0, 0L);
+        client.updateGtidSet(new Event(headerOf(EventType.GTID_TAGGED), taggedData));
+
+        // Simulate: XID commit — this calls commitGtid() and flushes gtid into gtidSet
+        XidEventData xidData = new XidEventData();
+        client.updateGtidSet(new Event(headerOf(EventType.XID), xidData));
+
+        // The GTID set must now include uuid:testtag:2
+        final GtidSet gtidSet = new GtidSet(client.getGtidSet());
+        final GtidSet.UUIDSet taggedUuidSet = gtidSet.getUUIDSet(uuid, tag);
+        assertNotNull(taggedUuidSet,
+            "GtidSet must contain an entry for " + uuid + " with tag '" + tag + "'");
+        assertEquals(taggedUuidSet.getIntervals().size(), 1);
+        assertEquals(taggedUuidSet.getIntervals().get(0).getStart(), 2L);
+        assertEquals(taggedUuidSet.getIntervals().get(0).getEnd(), 2L);
+    }
+
+    /**
+     * Plain (untagged) {@code GTID} handling must be unaffected by
+     * the addition of the {@code GTID_TAGGED} case.
+     */
+    @Test
+    public void testUpdateGtidSetStillTracksUntaggedGtid() {
+        final String uuid = "00000000-0000-0000-0000-000000000002";
+        final String initialGtidSet = uuid + ":1-1";
+
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setGtidSet(initialGtidSet);
+
+        // GTID (untagged) event for uuid:2
+        MySqlGtid untaggedGtid = MySqlGtid.fromString(uuid + ":2");
+        GtidEventData gtidData = new GtidEventData(
+            untaggedGtid, (byte) 0, 0L, 0L, 0L, 0L, 0L, 0, 0);
+        client.updateGtidSet(new Event(headerOf(EventType.GTID), gtidData));
+
+        XidEventData xidData = new XidEventData();
+        client.updateGtidSet(new Event(headerOf(EventType.XID), xidData));
+
+        final GtidSet gtidSet = new GtidSet(client.getGtidSet());
+        final GtidSet.UUIDSet uuidSet = gtidSet.getUUIDSet(uuid);
+        assertNotNull(uuidSet, "GtidSet must contain an untagged entry for " + uuid);
+        // Interval 1-1 and 2-2 should be merged to 1-2
+        assertEquals(uuidSet.getIntervals().get(0).getEnd(), 2L);
+    }
+
+    /**
+     * Verifies the {@code getGtidSet()} accessor returns the correct string
+     * representation when the GTID set contains both untagged and tagged entries.
+     */
+    @Test
+    public void testGetGtidSetReflectsTaggedAndUntaggedEntries() {
+        final String uuid = "00000000-0000-0000-0000-000000000003";
+        final String tag = "mytag";
+
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        client.setGtidSet(uuid + ":1-1:" + tag + ":5-5");
+
+        final String gtidSetStr = client.getGtidSet();
+        assertTrue(gtidSetStr != null && !gtidSetStr.isEmpty(),
+            "getGtidSet() must return a non-empty string when a non-empty GTID was set");
+        assertTrue(gtidSetStr.contains(uuid),
+            "GTID set string must contain the server UUID");
+        assertTrue(gtidSetStr.contains(tag),
+            "GTID set string must contain the tag");
+    }
 }

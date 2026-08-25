@@ -268,6 +268,9 @@ public class GtidSet {
             }
             uuidSets.add(uuidSet);
         }
+        // Ensure untagged entry always appears first within each UUID group.
+        groups.values().forEach(list ->
+            list.sort(Comparator.comparing(u -> u.getTag() == null ? "" : u.getTag())));
         return groups;
     }
 
