@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+- Stop failing silently when a connection can no longer be restored (debezium/dbz#1474). Previously
+  a client that lost its connection and could never get it back kept retrying forever while the
+  application saw neither an event nor a callback, and had no way of telling that state apart from
+  an idle server:
+  - New `LifecycleListener#onReconnectAbandoned(client, cause, failedAttempts)` callback, reporting
+    that the keepalive thread has stopped and nothing will reconnect the client any more. It is a
+    `default` no-op method, so existing implementations keep compiling. It is deliberately not
+    reported through `onCommunicationFailure`, which is documented to precede `onDisconnect` while
+    this necessarily follows it.
+  - New `keepAliveMaxReconnectAttempts` property. When set, the keepalive thread stops after that
+    many consecutive failed reconnects and reports the last failure through `onReconnectAbandoned`.
+    It defaults to `0`, i.e. retry indefinitely, so existing behavior is unchanged unless the
+    property is set.
+  - Failed reconnect attempts are now logged with the attempt count and the underlying exception,
+    which used to be dropped entirely.
+  - An unexpected `Throwable` in the keepalive loop no longer kills the keepalive thread unnoticed
+    (the executor parked it in a `Future` nobody reads, leaving nothing to reconnect the client);
+    it is reported through `onReconnectAbandoned` instead.
+  - An `Error` raised while reading the stream - an `OutOfMemoryError` while assembling an oversized
+    packet being the reported case - is now reported through
+    `LifecycleListener#onCommunicationFailure` before it propagates. It used to terminate the reader
+    thread with nothing but `onDisconnect`, indistinguishable from an orderly shutdown.
+  - `disconnect()` called from a `LifecycleListener` running on the keepalive thread no longer
+    deadlocks awaiting that thread's own termination.
 - Prevent the keepalive thread from tearing down a connection that is still waiting for its
   first event (debezium/dbz#2266): with heartbeats enabled, the event-staleness check now
   applies only once the current connection has started streaming. Until then the socket is
