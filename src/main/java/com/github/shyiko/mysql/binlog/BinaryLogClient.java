@@ -157,13 +157,15 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private SSLSocketFactory sslSocketFactory;
 
     protected volatile PacketChannel channel;
-    private volatile boolean connected;
+    // visible for testing
+    volatile boolean connected;
     private volatile long masterServerId = -1;
 
     private ThreadFactory threadFactory;
 
     private boolean keepAlive = true;
     private long keepAliveInterval = TimeUnit.MINUTES.toMillis(1);
+    private int keepAliveMaxReconnectAttempts;
 
     private long heartbeatInterval;
     private volatile long eventLastSeen;
@@ -177,6 +179,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private long netReadTimeout;
 
     private volatile ExecutorService keepAliveThreadExecutor;
+    private volatile Thread keepAliveThread;
 
     private final Lock connectLock = new ReentrantLock();
     private final Lock keepAliveThreadExecutorLock = new ReentrantLock();
@@ -438,6 +441,40 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      */
     public void setKeepAliveInterval(long keepAliveInterval) {
         this.keepAliveInterval = keepAliveInterval;
+    }
+
+    /**
+     * @return number of consecutive failed reconnect attempts after which the "keep alive" thread gives up,
+     * 0 (the default) if it retries indefinitely.
+     * @see #setKeepAliveMaxReconnectAttempts(int)
+     */
+    public int getKeepAliveMaxReconnectAttempts() {
+        return keepAliveMaxReconnectAttempts;
+    }
+
+    /**
+     * Bound the number of consecutive attempts the "keep alive" thread makes to restore a lost connection.
+     * <p>
+     * By default the keepalive thread retries indefinitely and reports nothing but a log message, so a
+     * connection that can never be restored leaves the client silently idle: no events are delivered, yet
+     * no callback fires either, and the application has no way of telling this apart from an idle server
+     * (debezium/dbz#1474).
+     * <p>
+     * When a limit is set, the keepalive thread stops after that many consecutive failed attempts and
+     * reports the last failure through
+     * {@link LifecycleListener#onReconnectAbandoned(BinaryLogClient, Throwable, int)}, allowing the
+     * application to fail fast and re-create the client. The counter is reset by every successful
+     * reconnect and by every check that finds the connection healthy.
+     *
+     * @param keepAliveMaxReconnectAttempts maximum number of consecutive failed reconnect attempts,
+     * 0 to retry indefinitely.
+     * @see #getKeepAliveMaxReconnectAttempts()
+     */
+    public void setKeepAliveMaxReconnectAttempts(int keepAliveMaxReconnectAttempts) {
+        if (keepAliveMaxReconnectAttempts < 0) {
+            throw new IllegalArgumentException("keepAliveMaxReconnectAttempts cannot be negative");
+        }
+        this.keepAliveMaxReconnectAttempts = keepAliveMaxReconnectAttempts;
     }
 
     /**
@@ -959,7 +996,9 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
                 @Override
                 public Thread newThread(Runnable runnable) {
-                    return newNamedThread(runnable, "blc-keepalive-" + hostname + ":" + port);
+                    Thread thread = newNamedThread(runnable, "blc-keepalive-" + hostname + ":" + port);
+                    keepAliveThread = thread;
+                    return thread;
                 }
             });
         try {
@@ -967,32 +1006,64 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             threadExecutor.submit(new Runnable() {
                 @Override
                 public void run() {
-                    while (!threadExecutor.isShutdown()) {
-                        try {
-                            Thread.sleep(keepAliveInterval);
-                        } catch (InterruptedException e) {
-                            // expected in case of disconnect
-                        }
-                        if (threadExecutor.isShutdown()) {
-                            logger.info("threadExecutor is shut down, terminating keepalive thread");
-                            return;
-                        }
-                        if (isConnectionLost()) {
-                            logger.info("Keepalive: Trying to restore lost connection to " + hostname + ":" + port);
-                            try {
-                                terminateConnect(useNonGracefulDisconnect);
-                                connect(connectTimeout);
-                            } catch (Exception ce) {
-                                logger.warning("keepalive: Failed to restore connection to " + hostname + ":" + port +
-                                    ". Next attempt in " + keepAliveInterval + "ms");
-                            }
-                        }
-                    }
+                    runKeepAlive(threadExecutor);
                 }
             });
             keepAliveThreadExecutor = threadExecutor;
         } finally {
             keepAliveThreadExecutorLock.unlock();
+        }
+    }
+
+    // visible for testing
+    void runKeepAlive(ExecutorService threadExecutor) {
+        int failedReconnects = 0;
+        while (!threadExecutor.isShutdown()) {
+            try {
+                Thread.sleep(keepAliveInterval);
+            } catch (InterruptedException e) {
+                // expected in case of disconnect
+            }
+            if (threadExecutor.isShutdown()) {
+                logger.info("threadExecutor is shut down, terminating keepalive thread");
+                return;
+            }
+            try {
+                if (!isConnectionLost()) {
+                    failedReconnects = 0;
+                    continue;
+                }
+                logger.info("Keepalive: Trying to restore lost connection to " + hostname + ":" + port);
+                try {
+                    terminateConnect(useNonGracefulDisconnect);
+                    connect(connectTimeout);
+                    failedReconnects = 0;
+                } catch (Exception ce) {
+                    failedReconnects++;
+                    if (keepAliveMaxReconnectAttempts > 0 && failedReconnects >= keepAliveMaxReconnectAttempts) {
+                        logger.log(Level.SEVERE, "keepalive: Failed to restore connection to " + hostname + ":" +
+                            port + " after " + failedReconnects + " attempt(s), giving up", ce);
+                        // stop before notifying: the listener is free to call disconnect() and must not find
+                        // a keepalive thread that is about to try again
+                        threadExecutor.shutdown();
+                        notifyReconnectAbandoned(ce, failedReconnects);
+                        return;
+                    }
+                    logger.log(Level.WARNING, "keepalive: Failed to restore connection to " + hostname + ":" + port +
+                        " (attempt " + failedReconnects +
+                        (keepAliveMaxReconnectAttempts > 0 ? " of " + keepAliveMaxReconnectAttempts : "") +
+                        "). Next attempt in " + keepAliveInterval + "ms", ce);
+                }
+            } catch (Throwable t) {
+                // Anything escaping the loop body kills the keepalive thread without a trace - the executor
+                // parks it in a Future nobody ever reads - leaving a client that reports itself connected
+                // with nothing left to reconnect it (debezium/dbz#1474). The outcome is the same as running
+                // out of attempts, so it is reported the same way.
+                logger.log(Level.SEVERE, "keepalive: Terminating after an unexpected failure", t);
+                threadExecutor.shutdown();
+                notifyReconnectAbandoned(t, failedReconnects);
+                return;
+            }
         }
     }
 
@@ -1139,7 +1210,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         eventDeserializer.setChecksumType(checksumType);
     }
 
-    private void listenForEventPackets() throws IOException {
+    // visible for testing
+    void listenForEventPackets() throws IOException {
         ByteArrayInputStream inputStream = channel.getInputStream();
         boolean completeShutdown = false;
         try {
@@ -1188,10 +1260,17 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             }
         } catch (Exception e) {
             if (isConnected()) {
-                for (LifecycleListener lifecycleListener : lifecycleListeners) {
-                    lifecycleListener.onCommunicationFailure(this, e);
-                }
+                notifyCommunicationFailure(e);
             }
+        } catch (Error e) {
+            // An Error - e.g. an OutOfMemoryError while assembling an oversized packet, is not covered by
+            // the catch above and would terminate the reader thread with nothing but onDisconnect: the
+            // application cannot tell a fatal read failure apart from an orderly shutdown and keeps
+            // believing streaming is in progress (debezium/dbz#1474). Report it, then let it propagate.
+            if (isConnected()) {
+                notifyCommunicationFailure(new IOException("Binary log reader terminated abnormally", e));
+            }
+            throw e;
         } finally {
             if (isConnected()) {
                 if (completeShutdown) {
@@ -1373,6 +1452,30 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         }
     }
 
+    private void notifyCommunicationFailure(Exception e) {
+        for (LifecycleListener lifecycleListener : lifecycleListeners) {
+            try {
+                lifecycleListener.onCommunicationFailure(this, e);
+            } catch (Exception le) {
+                if (logger.isLoggable(Level.WARNING)) {
+                    logger.log(Level.WARNING, lifecycleListener + " choked on " + e, le);
+                }
+            }
+        }
+    }
+
+    private void notifyReconnectAbandoned(Throwable cause, int failedAttempts) {
+        for (LifecycleListener lifecycleListener : lifecycleListeners) {
+            try {
+                lifecycleListener.onReconnectAbandoned(this, cause, failedAttempts);
+            } catch (Exception le) {
+                if (logger.isLoggable(Level.WARNING)) {
+                    logger.log(Level.WARNING, lifecycleListener + " choked on " + cause, le);
+                }
+            }
+        }
+    }
+
     /**
      * @return registered lifecycle listeners
      */
@@ -1431,6 +1534,12 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         } finally {
             keepAliveThreadExecutorLock.unlock();
         }
+        if (Thread.currentThread() == keepAliveThread) {
+            // disconnect() was called from the keepalive thread itself, typically by a LifecycleListener
+            // reacting to a failure reported from there; awaiting our own termination would deadlock.
+            logger.fine("disconnect() called from the keepalive thread, not awaiting its termination");
+            return;
+        }
         while (!awaitTerminationInterruptibly(keepAliveThreadExecutor,
             Long.MAX_VALUE, TimeUnit.NANOSECONDS)) {
             // ignore
@@ -1460,7 +1569,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             disconnectChannel(force);
             lockAcquired = tryLockInterruptibly(connectLock, 1000, TimeUnit.MILLISECONDS);
         } while (!lockAcquired);
-        
+
         // Only unlock if we actually acquired the lock
         if (lockAcquired) {
             connectLock.unlock();
@@ -1534,6 +1643,25 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 		 * @param client the client that disconnected
          */
         void onDisconnect(BinaryLogClient client);
+
+        /**
+         * Called once the "keep alive" thread has stopped trying to restore the connection, either because
+         * {@link BinaryLogClient#setKeepAliveMaxReconnectAttempts(int)} consecutive attempts have failed or
+         * because the thread itself terminated on an unexpected failure. No further reconnect will be
+         * attempted, so unless the application reconnects the client no more events will be delivered.
+         * <p>
+         * This is reported after the {@link #onDisconnect(BinaryLogClient)} of the connection that was
+         * lost - the client is only known to have given up once that connection is long gone - which is
+         * why it is not reported through
+         * {@link #onCommunicationFailure(BinaryLogClient, Exception)}, whose contract is the opposite.
+         *
+         * @param client the client that gave up reconnecting
+         * @param cause failure of the last reconnect attempt, or the failure that terminated the "keep
+         * alive" thread
+         * @param failedAttempts number of consecutive failed reconnect attempts, 0 if the "keep alive"
+         * thread terminated before any attempt failed
+         */
+        default void onReconnectAbandoned(BinaryLogClient client, Throwable cause, int failedAttempts) { }
     }
 
     /**
@@ -1548,6 +1676,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         public void onEventDeserializationFailure(BinaryLogClient client, Exception ex) { }
 
         public void onDisconnect(BinaryLogClient client) { }
+
+        public void onReconnectAbandoned(BinaryLogClient client, Throwable cause, int failedAttempts) { }
 
     }
 

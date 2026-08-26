@@ -19,7 +19,9 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.fail;
 
+import java.io.ByteArrayOutputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -29,11 +31,15 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.testng.annotations.Test;
 
@@ -533,6 +539,186 @@ public class BinaryLogClientTest {
         client.channel = stubChannel(false);
         assertTrue(client.isConnectionLost(),
             "with heartbeats disabled a broken socket must be considered lost");
+    }
+
+    /**
+     * A client that always considers its connection lost and can never reconnect, as the reconnect
+     * target does not resolve.
+     */
+    private static BinaryLogClient unreconnectableClient() {
+        BinaryLogClient client = new BinaryLogClient("_localhost_", 3306, "root", "mysql") {
+            @Override
+            boolean isConnectionLost() {
+                return true;
+            }
+        };
+        client.setKeepAliveInterval(1);
+        client.setConnectTimeout(100);
+        return client;
+    }
+
+    private static List<Exception> captureCommunicationFailures(BinaryLogClient client) {
+        final List<Exception> failures = Collections.synchronizedList(new ArrayList<Exception>());
+        client.registerLifecycleListener(new BinaryLogClient.AbstractLifecycleListener() {
+            @Override
+            public void onCommunicationFailure(BinaryLogClient client, Exception ex) {
+                failures.add(ex);
+            }
+        });
+        return failures;
+    }
+
+    /**
+     * Records the arguments of the last onReconnectAbandoned callback, and how many arrived.
+     */
+    private static class AbandonedReconnects {
+        private volatile Throwable cause;
+        private volatile int failedAttempts;
+        private final AtomicInteger count = new AtomicInteger();
+    }
+
+    private static AbandonedReconnects captureAbandonedReconnects(BinaryLogClient client) {
+        final AbandonedReconnects abandoned = new AbandonedReconnects();
+        client.registerLifecycleListener(new BinaryLogClient.AbstractLifecycleListener() {
+            @Override
+            public void onReconnectAbandoned(BinaryLogClient client, Throwable cause, int failedAttempts) {
+                abandoned.cause = cause;
+                abandoned.failedAttempts = failedAttempts;
+                abandoned.count.incrementAndGet();
+            }
+        });
+        return abandoned;
+    }
+
+    /**
+     * Once keepAliveMaxReconnectAttempts consecutive reconnects have failed the keepalive thread must
+     * stop and report the last failure, so the application can fail fast instead of being left with a
+     * client that delivers no events and reports no error (debezium/dbz#1474).
+     */
+    @Test(timeOut = 30000)
+    public void testKeepAliveGivesUpAndReportsFailureAfterMaxReconnectAttempts() throws Exception {
+        BinaryLogClient client = unreconnectableClient();
+        client.setKeepAliveMaxReconnectAttempts(3);
+        List<Exception> communicationFailures = captureCommunicationFailures(client);
+        AbandonedReconnects abandoned = captureAbandonedReconnects(client);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            client.runKeepAlive(executor); // returns once the client has given up
+            assertEquals(abandoned.count.get(), 1);
+            assertEquals(abandoned.failedAttempts, 3, "the number of attempts made must be reported");
+            assertNotNull(abandoned.cause, "the last reconnect failure must be reported as the cause");
+            assertTrue(communicationFailures.isEmpty(), "giving up must not be reported as a communication " +
+                "failure, which is documented to precede onDisconnect");
+            assertTrue(executor.isShutdown(),
+                "the keepalive thread must shut its executor down so a later connect() can spawn a fresh one");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * Without an explicit limit the keepalive thread keeps retrying and reports nothing, which is the
+     * behavior every existing consumer relies on.
+     */
+    @Test(timeOut = 30000)
+    public void testKeepAliveRetriesIndefinitelyByDefault() throws Exception {
+        final AtomicInteger checks = new AtomicInteger();
+        final BinaryLogClient client = new BinaryLogClient("_localhost_", 3306, "root", "mysql") {
+            @Override
+            boolean isConnectionLost() {
+                checks.incrementAndGet();
+                return true;
+            }
+        };
+        client.setKeepAliveInterval(1);
+        client.setConnectTimeout(100);
+        assertEquals(client.getKeepAliveMaxReconnectAttempts(), 0, "retrying indefinitely must stay the default");
+        AbandonedReconnects abandoned = captureAbandonedReconnects(client);
+        final ExecutorService executor = Executors.newSingleThreadExecutor();
+        Thread keepAliveThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                client.runKeepAlive(executor);
+            }
+        });
+        keepAliveThread.start();
+        try {
+            while (checks.get() < 5) {
+                Thread.sleep(10);
+            }
+            assertEquals(abandoned.count.get(), 0,
+                "with no limit configured the keepalive thread must keep retrying silently");
+            assertFalse(executor.isShutdown());
+        } finally {
+            executor.shutdown();
+            keepAliveThread.join(10000);
+        }
+        assertFalse(keepAliveThread.isAlive(), "the keepalive thread must stop once its executor is shut down");
+    }
+
+    /**
+     * An unexpected failure in the keepalive loop used to kill the thread without a trace - the executor
+     * parks it in a Future nobody reads - leaving a client that nothing will ever reconnect. It must be
+     * reported instead (debezium/dbz#1474).
+     */
+    @Test(timeOut = 30000)
+    public void testKeepAliveReportsUnexpectedFailureInsteadOfDyingSilently() throws Exception {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql") {
+            @Override
+            boolean isConnectionLost() {
+                throw new IllegalStateException("test: keepalive blew up");
+            }
+        };
+        client.setKeepAliveInterval(1);
+        AbandonedReconnects abandoned = captureAbandonedReconnects(client);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            client.runKeepAlive(executor);
+            assertEquals(abandoned.count.get(), 1);
+            assertEquals(abandoned.cause.getMessage(), "test: keepalive blew up");
+            assertEquals(abandoned.failedAttempts, 0, "the thread died before any reconnect attempt failed");
+            assertTrue(executor.isShutdown());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * An Error raised while reading the stream - an OutOfMemoryError while assembling an oversized
+     * packet being the reported case - used to terminate the reader thread with nothing but
+     * onDisconnect, so the application went on believing streaming was in progress. It must be
+     * reported as a communication failure and still propagate (debezium/dbz#1474).
+     */
+    @Test(timeOut = 30000)
+    public void testErrorWhileReadingIsReportedAsCommunicationFailure() throws Exception {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+        List<Exception> failures = captureCommunicationFailures(client);
+        client.channel = new PacketChannel(new Socket() {
+            @Override
+            public InputStream getInputStream() throws IOException {
+                return new InputStream() {
+                    @Override
+                    public int read() throws IOException {
+                        throw new OutOfMemoryError("test: oversized packet");
+                    }
+                };
+            }
+
+            @Override
+            public OutputStream getOutputStream() throws IOException {
+                return new ByteArrayOutputStream();
+            }
+        });
+        client.connected = true;
+        try {
+            client.listenForEventPackets();
+            fail("the Error must propagate to the reader thread");
+        } catch (OutOfMemoryError expected) {
+            assertEquals(expected.getMessage(), "test: oversized packet");
+        }
+        assertEquals(failures.size(), 1);
+        assertNotNull(failures.get(0).getCause());
+        assertEquals(failures.get(0).getCause().getMessage(), "test: oversized packet");
     }
 
     /*
