@@ -96,6 +96,9 @@ import java.util.logging.Logger;
  */
 public class BinaryLogClient implements BinaryLogClientMXBean {
 
+    // flag marking events fabricated by the server that do not exist in the binlog file
+    private static final int LOG_EVENT_ARTIFICIAL_F = 0x20;
+
     private static final SSLSocketFactory DEFAULT_REQUIRED_SSL_MODE_SOCKET_FACTORY = new DefaultSSLSocketFactory() {
 
         @Override
@@ -136,6 +139,14 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private long serverId = 65535;
     private volatile String binlogFilename;
     private volatile long binlogPosition = 4;
+    /*
+     * Real end position of the last streamed event. The log_pos field of the common event
+     * header is an unsigned 32-bit integer on disk, so it wraps around for events located
+     * past 4GiB in a binlog file; this value is rebuilt from ROTATE events (whose payload
+     * carries the position as 8 bytes) plus the accumulated event lengths, and stays exact
+     * for files of any size. -1 until the first anchor of the current connection is seen.
+     */
+    private long linearExecutionPosition = -1;
     private volatile long connectionId;
     private SSLMode sslMode = SSLMode.DISABLED;
     private boolean useNonGracefulDisconnect = false;
@@ -1142,6 +1153,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private void listenForEventPackets() throws IOException {
         ByteArrayInputStream inputStream = channel.getInputStream();
         boolean completeShutdown = false;
+        linearExecutionPosition = -1;
         try {
             while (inputStream.peek() != -1) {
                 int packetLength = inputStream.readInteger(3);
@@ -1181,6 +1193,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 if (isConnected()) {
                     eventLastSeen = System.currentTimeMillis();
                     eventSeenSinceConnect = true;
+                    rewriteWrappedNextPosition(event);
                     updateGtidSet(event);
                     notifyEventListeners(event);
                     updateClientBinlogFilenameAndPosition(event);
@@ -1213,6 +1226,42 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             inputStream.fill(result, result.length - chunkLength, chunkLength);
         } while (chunkLength == Packet.MAX_LENGTH);
         return result;
+    }
+
+    /**
+     * Rebuilds the real end position of the event and rewrites the header with it.
+     *
+     * <p>The log_pos field of the common event header is an unsigned 32-bit integer on disk,
+     * so it wraps around for events located past 4GiB in a binlog file (the server truncates
+     * its 64-bit position with a cast when writing the header) and cannot be trusted for
+     * large files. ROTATE events carry the position as 8 bytes in their payload and anchor
+     * the tracking; every following in-band event advances it by its own length. Artificial
+     * events (fake rotates, heartbeats) and events sent with a zeroed position (like the
+     * format description of a dump started in the middle of a file) are not part of the
+     * served portion of the file and leave the tracking untouched.
+     */
+    // visible for testing
+    void rewriteWrappedNextPosition(Event event) {
+        EventHeader eventHeader = event.getHeader();
+        if (eventHeader.getEventType() == EventType.ROTATE) {
+            RotateEventData rotateEventData = (RotateEventData) EventDataWrapper.internal(event.getData());
+            linearExecutionPosition = rotateEventData.getBinlogPosition();
+            return;
+        }
+        if (!(eventHeader instanceof EventHeaderV4)) {
+            return;
+        }
+        EventHeaderV4 headerV4 = (EventHeaderV4) eventHeader;
+        if ((headerV4.getFlags() & LOG_EVENT_ARTIFICIAL_F) != 0 || headerV4.getNextPosition() == 0) {
+            return;
+        }
+        if (linearExecutionPosition < 0) {
+            // no anchor seen yet; adopt the server-provided position instead of rewriting
+            linearExecutionPosition = headerV4.getNextPosition();
+            return;
+        }
+        linearExecutionPosition += headerV4.getEventLength();
+        headerV4.setNextPosition(linearExecutionPosition);
     }
 
     private void updateClientBinlogFilenameAndPosition(Event event) {
