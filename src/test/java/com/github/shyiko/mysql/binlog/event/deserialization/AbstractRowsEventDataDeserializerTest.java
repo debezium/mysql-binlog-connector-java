@@ -15,9 +15,12 @@
  */
 package com.github.shyiko.mysql.binlog.event.deserialization;
 
+import com.github.shyiko.mysql.binlog.event.EventData;
 import com.github.shyiko.mysql.binlog.event.deserialization.AbstractRowsEventDataDeserializer.UnixTime;
+import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 import org.testng.annotations.Test;
 
+import java.io.IOException;
 import java.util.Calendar;
 import java.util.TimeZone;
 
@@ -45,6 +48,25 @@ public class AbstractRowsEventDataDeserializerTest {
             timestamp(1, 1, 1, 0, 0, 0, 0));
         assetTimeEquals(UnixTime.from(0000, 12, 30, 0, 0, 0, 0),
             timestamp(0000, 12, 30, 0, 0, 0, 0));
+    }
+
+    @Test
+    public void testZeroInDate() throws Exception {
+        final long invalidDate = 0L;
+        AbstractRowsEventDataDeserializer<EventData> dummyDes = new AbstractRowsEventDataDeserializer<EventData>(null) {
+            @Override
+            public EventData deserialize(ByteArrayInputStream inputStream) throws IOException {
+                return null;
+            }
+        };
+        dummyDes.setInvalidDateAndTimeRepresentation(invalidDate);
+
+        assetTimeEquals(dummyDes.asUnixTime(0000, 12, 30, 0, 0, 0, 0),
+            timestamp(0000, 12, 30, 0, 0, 0, 0));
+        assetTimeEquals(dummyDes.asUnixTime(2026, 0, 30, 0, 0, 0, 0),
+            invalidDate);
+        assetTimeEquals(dummyDes.asUnixTime(2026, 12, 0, 0, 0, 0, 0),
+            invalidDate);
     }
 
     private void assetTimeEquals(long actual, long expected) {
