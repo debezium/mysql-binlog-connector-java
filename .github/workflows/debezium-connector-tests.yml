@@ -1,0 +1,143 @@
+#
+# Copyright Debezium authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# This workflow builds the binlog-connector-java from PR and runs Debezium MySQL and MariaDB connector tests
+
+name: Debezium Connector Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-mysql-connector:
+    name: Test Debezium MySQL Connector
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout binlog-connector-java
+      uses: actions/checkout@v6
+      with:
+        path: binlog-connector-java
+
+    - name: Setup Java for binlog-connector-java
+      uses: ./binlog-connector-java/.github/actions/setup-java
+
+    - name: Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: Build and install binlog-connector-java
+      working-directory: binlog-connector-java
+      run: ./mvnw -B clean install -Dgpg.skip=true --file pom.xml
+
+    - name: Get binlog-connector-java version
+      id: get-version
+      working-directory: binlog-connector-java
+      run: |
+        VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Binlog connector version: $VERSION"
+
+    - name: Checkout Debezium
+      uses: actions/checkout@v6
+      with:
+        repository: debezium/debezium
+        path: debezium
+
+    - name: Update Debezium to use local binlog-connector-java
+      working-directory: debezium
+      run: |
+        # Update the binlog connector version in Debezium's parent pom
+        ./mvnw versions:set-property -Dproperty=version.mysql.binlog -DnewVersion=${{ steps.get-version.outputs.version }} -DgenerateBackupPoms=false
+
+    - name: Build and test Debezium MySQL connector
+      working-directory: debezium
+      run: >
+        ./mvnw clean install -B -pl debezium-connector-mysql -am
+        -Pmysql-ci
+        -Dcheckstyle.skip=true
+        -Dformat.skip=true
+        -Dversion.mysql.server=9.7
+        -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn
+        -Dmaven.wagon.http.pool=false
+        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120
+        -DfailFlakyTests=false
+        -Ddebezium.test.mongo.replica.primary.startup.timeout.seconds=120
+
+  test-mariadb-connector:
+    name: Test Debezium MariaDB Connector
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout binlog-connector-java
+      uses: actions/checkout@v6
+      with:
+        path: binlog-connector-java
+
+    - name: Setup Java for binlog-connector-java
+      uses: ./binlog-connector-java/.github/actions/setup-java
+
+    - name: Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: Build and install binlog-connector-java
+      working-directory: binlog-connector-java
+      run: ./mvnw -B clean install -Dgpg.skip=true --file pom.xml
+
+    - name: Get binlog-connector-java version
+      id: get-version
+      working-directory: binlog-connector-java
+      run: |
+        VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Binlog connector version: $VERSION"
+
+    - name: Checkout Debezium
+      uses: actions/checkout@v6
+      with:
+        repository: debezium/debezium
+        path: debezium
+
+    - name: Update Debezium to use local binlog-connector-java
+      working-directory: debezium
+      run: |
+        # Update the binlog connector version in Debezium's parent pom
+        ./mvnw versions:set-property -Dproperty=version.mysql.binlog -DnewVersion=${{ steps.get-version.outputs.version }} -DgenerateBackupPoms=false
+
+    - name: Build and test Debezium MariaDB connector
+      working-directory: debezium
+      run: >
+        ./mvnw clean install -B -pl debezium-connector-mariadb -am
+        -Pmariadb-ci
+        -Dcheckstyle.skip=true
+        -Dformat.skip=true
+        -Dversion.mariadb.server=12.3
+        -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn
+        -Dmaven.wagon.http.pool=false
+        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120
+        -DfailFlakyTests=false
+        -Ddebezium.test.mongo.replica.primary.startup.timeout.seconds=120
