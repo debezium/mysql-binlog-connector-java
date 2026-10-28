@@ -68,6 +68,9 @@ public class JsonStringFormatter implements JsonFormatter {
 
     private static final char[] HEX_CODES = "0123456789ABCDEF".toCharArray();
 
+    // 10^DBL_DIG: MySQL's MAX_DECPT_FOR_F_FORMAT, where my_gcvt switches whole numbers to e notation
+    private static final double MYSQL_MAX_PLAIN_WHOLE_DOUBLE = 1e15;
+
     private final StringBuilder sb;
 
     public JsonStringFormatter() {
@@ -137,10 +140,24 @@ public class JsonStringFormatter implements JsonFormatter {
 
     @Override
     public void value(double value) {
-        // Double's toString method will result in scientific notation and loss of precision
+        // Double.toString writes values below 1e-3 and from 1e7 up in scientific notation, so write those in plain
+        // notation instead. For a number with a fractional part, keep Double.toString's digits, the shortest that
+        // read back as the same double: new BigDecimal(value) would write its exact binary value instead, so 0.0001
+        // would become 0.000100000000000000004792... A whole number keeps its exact value, and below 1e15 gets ".0"
+        // the way MySQL writes it (24655300.0), so it still reads as a double. From 1e15 MySQL switches to
+        // scientific notation, so those stay plain integers, as before (18446744073709551616).
+        // (Before JDK 19 Double.toString is not always the very shortest, but it always reads back as the same double.)
         String str = Double.toString(value);
         if (str.contains("E")) {
-            value(new BigDecimal(value));
+            BigDecimal shortest = new BigDecimal(str).stripTrailingZeros();
+            if (shortest.scale() > 0) {
+                value(shortest);
+            } else {
+                value(new BigDecimal(value));
+                if (Math.abs(value) < MYSQL_MAX_PLAIN_WHOLE_DOUBLE) {
+                    sb.append(".0");
+                }
+            }
         } else {
             sb.append(str);
         }

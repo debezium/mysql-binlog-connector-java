@@ -452,6 +452,24 @@ public class JsonBinaryValueIntegrationTest {
     }
 
     @Test
+    public void testDoublesKeepTheirShortestDigits() throws Exception {
+        if ( isMaria )
+            throw new SkipException("MariaDB stores JSON as text");
+
+        // Compared as text. These used to come back as their exact binary values (0.000100000000000000004792...)
+        // or, for whole numbers, without ".0" (24655300)
+        String streamed = writeAndCaptureJSON("'[0.0001, 0.000313967, -0.000313967, 1e-7, 12345678.9, "
+            + "1e7, 24655300.0, -24655300.0, 2400000000000.0, 999999999999999.0, 0.5, 5.0]'");
+        assertEquals(streamed, "[0.0001,0.000313967,-0.000313967,0.0000001,12345678.9,"
+            + "10000000.0,24655300.0,-24655300.0,2400000000000.0,999999999999999.0,0.5,5.0]");
+        // and match the server's own text, apart from the ", " it puts between elements.
+        // MySQL 5.7 writes whole doubles without ".0" (5, not 5.0), so this only holds from 8.0.
+        if (TestDatabaseContainer.getVersion().atLeast(8, 0)) {
+            assertEquals(streamed, readJSONFromServer().replace(", ", ","));
+        }
+    }
+
+    @Test
     public void testEmptyObject() throws Exception {
         assertJSONMatchOriginal("{}");
     }
@@ -541,6 +559,15 @@ public class JsonBinaryValueIntegrationTest {
         } else {
             assertEquals(actual, expected);
         }
+    }
+
+    private String readJSONFromServer() throws Exception {
+        final String[] text = new String[1];
+        master.query("select cast(column_ as char) from data_type_hell", rs -> {
+            rs.next();
+            text[0] = rs.getString(1);
+        });
+        return text[0];
     }
 
     private String writeAndCaptureJSON(final String value) throws Exception {
