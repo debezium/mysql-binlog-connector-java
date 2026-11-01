@@ -32,7 +32,8 @@ public class ResultSetRowPacket implements Packet {
         ByteArrayInputStream buffer = new ByteArrayInputStream(bytes);
         List<String> values = new LinkedList<String>();
         while (buffer.available() > 0) {
-            values.add(buffer.readLengthEncodedString());
+            Number length = buffer.readPackedNumber();
+            values.add(length == null ? null : buffer.readString(length.intValue()));
         }
         this.values = values.toArray(new String[values.size()]);
     }
@@ -41,6 +42,10 @@ public class ResultSetRowPacket implements Packet {
         return values;
     }
 
+    /**
+     * @param index index of the column
+     * @return value of the column, null if it is SQL NULL
+     */
     public String getValue(int index) {
         return values[index];
     }

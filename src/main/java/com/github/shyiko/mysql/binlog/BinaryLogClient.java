@@ -48,6 +48,7 @@ import com.github.shyiko.mysql.binlog.network.SSLSocketFactory;
 import com.github.shyiko.mysql.binlog.network.ServerException;
 import com.github.shyiko.mysql.binlog.network.SocketFactory;
 import com.github.shyiko.mysql.binlog.network.TLSHostnameVerifier;
+import com.github.shyiko.mysql.binlog.network.protocol.ColumnDefinitionPacket;
 import com.github.shyiko.mysql.binlog.network.protocol.ErrorPacket;
 import com.github.shyiko.mysql.binlog.network.protocol.GreetingPacket;
 import com.github.shyiko.mysql.binlog.network.protocol.Packet;
@@ -71,10 +72,13 @@ import java.net.SocketException;
 import java.security.GeneralSecurityException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -162,6 +166,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     // visible for testing
     volatile boolean connected;
     private volatile long masterServerId = -1;
+    private boolean serverFactsEnabled;
+    private volatile ServerFacts serverFacts;
 
     private ThreadFactory threadFactory;
 
@@ -267,6 +273,37 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
     public long getMasterServerId() {
         return this.masterServerId;
+    }
+
+    /**
+     * @return whether the client reads {@link ServerFacts} when it connects (false by default)
+     * @see #setServerFactsEnabled(boolean)
+     */
+    public boolean isServerFactsEnabled() {
+        return serverFactsEnabled;
+    }
+
+    /**
+     * @param serverFactsEnabled true to read {@link ServerFacts}, such as {@code read_only} and the running
+     * replication channels, on the binary log connection whenever it connects, before it requests the stream. The
+     * statements need at most the {@code REPLICATION CLIENT} privilege, except the one for the role of a Group
+     * Replication member, which reads {@code performance_schema}. A statement that the server rejects leaves its
+     * facts null, and does not fail the connect.
+     * @see #getServerFacts()
+     */
+    public void setServerFactsEnabled(boolean serverFactsEnabled) {
+        this.serverFactsEnabled = serverFactsEnabled;
+    }
+
+    /**
+     * @return facts about the server that provided the binary log stream when the client last connected, null if
+     * {@link #setServerFactsEnabled(boolean)} is off. Like {@link #getMasterServerId()}, they are read on the binary
+     * log connection, so they describe the server that provides the stream, as of the time of the connect. They are
+     * available to {@link LifecycleListener#onConnect(BinaryLogClient)}, and are kept while the client is
+     * disconnected.
+     */
+    public ServerFacts getServerFacts() {
+        return serverFacts;
     }
 
     /**
@@ -772,6 +809,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         if (netReadTimeout > 0) {
             setNetReadTimeoutOnServer();
         }
+        serverFacts = serverFactsEnabled ? new ServerFactsReader(this::queryRows, databaseVersion).read() : null;
     }
 
     private PacketChannel openChannel() throws IOException {
@@ -1455,6 +1493,30 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 gtidSet.addGtid(gtid);
             }
         }
+    }
+
+    /**
+     * Runs a statement that returns a result set, and maps each row by the column names, in any case.
+     */
+    private List<Map<String, String>> queryRows(String sql) throws IOException {
+        channel.write(new QueryCommand(sql));
+        byte[] statementResult = channel.read();
+        checkError(statementResult);
+        List<String> columns = new ArrayList<String>();
+        for (byte[] bytes; (bytes = channel.read())[0] != (byte) 0xFE /* eof */; ) {
+            columns.add(new ColumnDefinitionPacket(bytes).getName());
+        }
+        List<Map<String, String>> rows = new ArrayList<Map<String, String>>();
+        for (byte[] bytes; (bytes = channel.read())[0] != (byte) 0xFE /* eof */; ) {
+            checkError(bytes);
+            String[] values = new ResultSetRowPacket(bytes).getValues();
+            Map<String, String> row = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+            for (int i = 0; i < values.length && i < columns.size(); i++) {
+                row.put(columns.get(i), values[i]);
+            }
+            rows.add(row);
+        }
+        return rows;
     }
 
     private ResultSetRowPacket[] readResultSet() throws IOException {
