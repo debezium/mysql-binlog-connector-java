@@ -79,8 +79,9 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -994,15 +995,16 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     }
 
     private void spawnKeepAliveThread() {
-        final ExecutorService threadExecutor =
-            Executors.newSingleThreadExecutor(new ThreadFactory() {
-
-                @Override
-                public Thread newThread(Runnable runnable) {
-                    Thread thread = newNamedThread(runnable, "blc-keepalive-" + hostname + ":" + port);
-                    keepAliveThread = thread;
-                    return thread;
-                }
+        // Do not use Executors.newSingleThreadExecutor() here. On JDK 21+ it wraps the pool in an
+        // AutoShutdownDelegatedExecutorService that registers a Cleaner whose action holds the pool and,
+        // through the ThreadFactory below, this client. The Cleaner list is a GC root, so a disconnected
+        // client could never be garbage collected (channel and TLS buffers included).
+        final ExecutorService threadExecutor = new ThreadPoolExecutor(1, 1, 0L,
+            TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+            runnable -> {
+                Thread thread = newNamedThread(runnable, "blc-keepalive-" + hostname + ":" + port);
+                keepAliveThread = thread;
+                return thread;
             });
         try {
             keepAliveThreadExecutorLock.lock();
