@@ -246,7 +246,9 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
         });
         if (!noZeroInDate[0]) {
             assertEquals(writeAndCaptureRow("date", "'0000-00-00'"), new Serializable[]{null});
-            assertEquals(writeAndCaptureRow("date", "'0000-03-21'"), new Serializable[]{null});
+            // a zero year with a valid month and day is a date, a zero month or day is not
+            assertEquals(writeAndCaptureRow("date", "'0000-03-21'"), new Serializable[]{
+                generateTime(0, 3, 21, 0, 0, 0, 0)});
             assertEquals(writeAndCaptureRow("date", "'1989-00-21'"), new Serializable[]{null});
             assertEquals(writeAndCaptureRow("date", "'1989-03-00'"), new Serializable[]{null});
         }
