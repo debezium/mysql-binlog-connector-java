@@ -666,7 +666,8 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
     @SuppressWarnings("deprecation")
     @Test
     public void testAutomaticFailover() throws Exception {
-        TCPReverseProxy tcpReverseProxy = new TCPReverseProxy(33262, slave.port);
+        // A free port, as a fixed one can be taken by another socket
+        TCPReverseProxy tcpReverseProxy = new TCPReverseProxy(0, slave.port);
         try {
             bindInSeparateThread(tcpReverseProxy);
             try {
@@ -684,14 +685,15 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                         mock(BinaryLogClient.LifecycleListener.class);
                     clientOverProxy.registerLifecycleListener(lifecycleListenerMock);
                     TimeUnit.MILLISECONDS.sleep(300); // giving keep-alive-thread a chance to run few iterations
-                    tcpReverseProxy.unbind();
+                    // The proxy keeps its port while the server is down, so that no other socket can take it
+                    tcpReverseProxy.suspend();
                     TimeUnit.MILLISECONDS.sleep(300);
                     master.execute(new Callback<Statement>() {
                         public void execute(Statement statement) throws SQLException {
                             statement.execute("insert into bikini_bottom values('SpongeBob')");
                         }
                     });
-                    bindInSeparateThread(tcpReverseProxy);
+                    tcpReverseProxy.resume();
                     eventListener.waitFor(WriteRowsEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
                     InOrder inOrder = inOrder(lifecycleListenerMock);
                     inOrder.verify(lifecycleListenerMock).onDisconnect(eq(clientOverProxy));
@@ -965,7 +967,7 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                 }
             }
         }).start();
-        tcpReverseProxy.await(3, TimeUnit.SECONDS);
+        assertTrue(tcpReverseProxy.await(3, TimeUnit.SECONDS), "The proxy did not bind");
     }
 
     @Test(expectedExceptions = AuthenticationException.class)
