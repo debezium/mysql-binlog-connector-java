@@ -26,6 +26,7 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -94,9 +95,13 @@ public class BinaryLogClientTest {
         assertEquals(binaryLogClient.getLifecycleListeners().size(), 1);
     }
 
-    @Test(expectedExceptions = TimeoutException.class)
+    @Test(expectedExceptions = TimeoutException.class, timeOut = 15000)
     public void testNoConnectionTimeout() throws Exception {
-        new BinaryLogClient("_localhost_", 3306, "root", "mysql").connect(0);
+        // The server accepts the connection but never sends its greeting, so the client neither connects nor fails before
+        // the timeout elapses. An unresolvable host could fail first, and connect() then throws that failure instead.
+        try (ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
+            new BinaryLogClient(server.getInetAddress().getHostAddress(), server.getLocalPort(), "root", "mysql").connect(0);
+        }
     }
 
     @Test(timeOut = 15000)
