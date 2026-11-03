@@ -106,17 +106,16 @@ public class BinaryLogClientTest {
 
     @Test(timeOut = 15000)
     public void testConnectionTimeout() throws Exception {
-        final BinaryLogClient binaryLogClient = new BinaryLogClient("localhost", 33059, "root", "mysql");
-        final CountDownLatch socketBound = new CountDownLatch(1);
+        // A free port, as a fixed one can be taken by another socket
+        final ServerSocket serverSocket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
+        final BinaryLogClient binaryLogClient = new BinaryLogClient(serverSocket.getInetAddress().getHostAddress(),
+            serverSocket.getLocalPort(), "root", "mysql");
         final CountDownLatch binaryLogClientDisconnected = new CountDownLatch(1);
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    final ServerSocket serverSocket = new ServerSocket();
                     try {
-                        serverSocket.bind(new InetSocketAddress("localhost", 33059));
-                        socketBound.countDown();
                         Socket accept = serverSocket.accept();
                         accept.getOutputStream().write(1);
                         accept.getOutputStream().flush();
@@ -129,7 +128,6 @@ public class BinaryLogClientTest {
                 }
             }
         }).start();
-        assertTrue(socketBound.await(3000, TimeUnit.MILLISECONDS));
         binaryLogClient.setConnectTimeout(1000);
         try {
             binaryLogClient.connect();
@@ -145,7 +143,10 @@ public class BinaryLogClientTest {
 
     @Test(timeOut = 15000)
     public void testDisconnectWhileBlockedByFBRead() throws Exception {
-        final BinaryLogClient binaryLogClient = new BinaryLogClient("localhost", 33061, "root", "mysql");
+        // A free port, as a fixed one can be taken by another socket
+        final ServerSocket serverSocket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
+        final BinaryLogClient binaryLogClient = new BinaryLogClient(serverSocket.getInetAddress().getHostAddress(),
+            serverSocket.getLocalPort(), "root", "mysql");
         final CountDownLatch readAttempted = new CountDownLatch(1);
         binaryLogClient.setSocketFactory(new SocketFactory() {
             @Override
@@ -167,15 +168,11 @@ public class BinaryLogClientTest {
             }
         });
         binaryLogClient.setKeepAlive(false);
-        final CountDownLatch socketBound = new CountDownLatch(1);
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    final ServerSocket serverSocket = new ServerSocket();
                     try {
-                        serverSocket.bind(new InetSocketAddress("localhost", 33061));
-                        socketBound.countDown();
                         serverSocket.accept(); // accept socket but do NOT send anything
                         assertTrue(readAttempted.await(3000, TimeUnit.MILLISECONDS));
                         Thread thread = new Thread(new Runnable() {
@@ -199,7 +196,6 @@ public class BinaryLogClientTest {
                 }
             }
         }).start();
-        assertTrue(socketBound.await(3000, TimeUnit.MILLISECONDS));
         try {
             binaryLogClient.connect();
         } catch (IOException e) {

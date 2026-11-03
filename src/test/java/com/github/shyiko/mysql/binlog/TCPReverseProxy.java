@@ -38,7 +38,8 @@ public class TCPReverseProxy {
 
     private final Logger logger = Logger.getLogger(getClass().getSimpleName());
 
-    private final int port;
+    // 0 until bound, when it was created for a free port
+    private volatile int port;
     private final String targetHost;
     private final int targetPort;
 
@@ -46,7 +47,14 @@ public class TCPReverseProxy {
     private Set<Closeable> closeable = Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap()));
     private volatile Selector selector;
     private volatile CountDownLatch latch;
+    private volatile ServerSocketChannel serverSocketChannel;
+    // While suspended, the proxy keeps its port but closes every connection, as if the target were down
+    private volatile boolean suspended;
 
+    /**
+     * @param port the port to listen on, or 0 for a free port, which {@link #getPort()} returns once the proxy is bound
+     * @param targetPort the port to forward to
+     */
     public TCPReverseProxy(int port, int targetPort) {
         this(port, "localhost", targetPort);
     }
@@ -74,8 +82,9 @@ public class TCPReverseProxy {
         if (!closeable.isEmpty()) {
             throw new IllegalStateException();
         }
-        ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+        serverSocketChannel = ServerSocketChannel.open();
         serverSocketChannel.socket().bind(new InetSocketAddress(port));
+        port = serverSocketChannel.socket().getLocalPort();
         closeable.add(serverSocketChannel);
         selector = Selector.open();
         serverSocketChannel.configureBlocking(false).register(selector, SelectionKey.OP_ACCEPT);
@@ -94,6 +103,10 @@ public class TCPReverseProxy {
                 if (key.isAcceptable()) {
                     ServerSocketChannel channel = (ServerSocketChannel) key.channel();
                     SocketChannel clientSocketChannel = channel.accept();
+                    if (suspended) {
+                        clientSocketChannel.close();
+                        continue;
+                    }
                     closeable.add(clientSocketChannel);
                     InetSocketAddress remoteAddress = new InetSocketAddress(targetHost, targetPort);
                     SocketChannel remoteSocketChannel = SocketChannel.open(remoteAddress);
@@ -130,15 +143,40 @@ public class TCPReverseProxy {
         }
     }
 
-    public void await(long timeout, TimeUnit unit) throws InterruptedException {
-        latch.await(timeout, unit);
+    /**
+     * @return true if the proxy is bound, false if it did not bind within the timeout
+     */
+    public boolean await(long timeout, TimeUnit unit) throws InterruptedException {
+        return latch.await(timeout, unit);
+    }
+
+    /**
+     * Closes the established connections and every new one, as if the target were down, while the proxy keeps its port.
+     */
+    public void suspend() {
+        suspended = true;
+        for (Closeable connection : closeable.toArray(new Closeable[closeable.size()])) {
+            if (connection != serverSocketChannel) {
+                closeQuietly(connection);
+            }
+        }
+    }
+
+    /**
+     * Forwards new connections again after {@link #suspend()}.
+     */
+    public void resume() {
+        suspended = false;
     }
 
     public void unbind() throws IOException {
-        try {
-            selector.close();
-        } catch (IOException e) {
-            e.printStackTrace();
+        // The proxy may never have bound, for example when its port was taken
+        if (selector != null) {
+            try {
+                selector.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
         closeQuietly(closeable.toArray(new Closeable[closeable.size()]));
         if (logger.isLoggable(Level.FINEST)) {
@@ -160,6 +198,7 @@ public class TCPReverseProxy {
 
     private void resetInternalState() {
         latch = new CountDownLatch(1);
+        suspended = false;
     }
 
 }
