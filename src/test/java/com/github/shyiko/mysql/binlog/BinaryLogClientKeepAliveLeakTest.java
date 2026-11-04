@@ -8,6 +8,7 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.util.concurrent.ThreadFactory;
 
+import org.testng.SkipException;
 import org.testng.annotations.Test;
 
 /**
@@ -24,28 +25,30 @@ import org.testng.annotations.Test;
  * with its channel and any TLS buffers.
  * <p>
  * No MySQL server is needed: the keepalive thread is started directly and {@link BinaryLogClient#disconnect()}
- * is called without a channel. The test is meaningful on JDK 21+ only (on older JDKs the executor wrapper is
- * finalizer based and the cycle is collectable), so it is skipped elsewhere.
+ * is called without a channel. The test is meaningful on JDK 21+ only, the reference to the client can only be pinned
+ * this way on JDK 21+, so the tests are skipped.
  */
 public class BinaryLogClientKeepAliveLeakTest {
 
     @Test(timeOut = 60000)
     public void disconnectedClientIsGarbageCollectable() throws Exception {
-        if (javaMajorVersion() < 21) {
-            return; // only JDK 21+ pins the client through the executor's Cleaner
-        }
+        assumeJdk21(); // only JDK 21+ pins the client through the executor's Cleaner
         WeakReference<BinaryLogClient> ref = startAndDisconnectClient(false);
         assertCollected(ref);
     }
 
     @Test(timeOut = 60000)
     public void disconnectedClientWithCustomThreadFactoryIsGarbageCollectable() throws Exception {
-        if (javaMajorVersion() < 21) {
-            return;
-        }
+        assumeJdk21();
         // Debezium installs its own ThreadFactory via setThreadFactory()
         WeakReference<BinaryLogClient> ref = startAndDisconnectClient(true);
         assertCollected(ref);
+    }
+
+    private static void assumeJdk21() {
+        if (javaMajorVersion() < 21) {
+            throw new SkipException("The executor's Cleaner pins the client only on JDK 21+");
+        }
     }
 
     private static WeakReference<BinaryLogClient> startAndDisconnectClient(boolean customThreadFactory)
