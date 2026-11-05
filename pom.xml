@@ -40,7 +40,7 @@
         <vagrant.integration.box>${basedir}/supplement/vagrant/mysql-5.7.15-sandbox-prepackaged</vagrant.integration.box>
 
         <version.testcontainers>2.0.4</version.testcontainers>
-        <version.jackson>2.18.2</version.jackson>
+        <version.jackson>2.18.12</version.jackson>
         <version.awaitility>4.3.0</version.awaitility>
         <version.mysql.driver>9.1.0</version.mysql.driver>
         <version.mariadb.driver>3.5.11</version.mariadb.driver>
