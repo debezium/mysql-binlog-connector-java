@@ -923,7 +923,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         channel.write(new QueryCommand("select @@server_id"));
         ResultSetRowPacket[] resultSet = readResultSet();
         if (resultSet.length >= 0) {
-            this.masterServerId = Long.parseLong(resultSet[0].getValue(0));
+            this.masterServerId = Long.parseLong(getNonNullValue(resultSet[0], 0, "@@server_id"));
         }
     }
 
@@ -1191,7 +1191,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         channel.write(new QueryCommand("show global variables like 'gtid_purged'"));
         ResultSetRowPacket[] resultSet = readResultSet();
         if (resultSet.length != 0) {
-            return resultSet[0].getValue(1).toUpperCase();
+            return getNonNullValue(resultSet[0], 1, "gtid_purged").toUpperCase();
         }
         return "";
     }
@@ -1232,8 +1232,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             throw new IOException("Failed to determine binlog filename/position");
         }
         ResultSetRowPacket resultSetRow = resultSet[0];
-        binlogFilename = resultSetRow.getValue(0);
-        binlogPosition = Long.parseLong(resultSetRow.getValue(1));
+        binlogFilename = getNonNullValue(resultSetRow, 0, "binary log file");
+        binlogPosition = Long.parseLong(getNonNullValue(resultSetRow, 1, "binary log position"));
     }
 
     private ChecksumType fetchBinlogChecksum() throws IOException {
@@ -1242,7 +1242,19 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         if (resultSet.length == 0) {
             return ChecksumType.NONE;
         }
-        return ChecksumType.valueOf(resultSet[0].getValue(1).toUpperCase());
+        return ChecksumType.valueOf(getNonNullValue(resultSet[0], 1, "binlog_checksum").toUpperCase());
+    }
+
+    /**
+     * @return value of the column
+     * @throws IOException if the value is SQL NULL
+     */
+    private static String getNonNullValue(ResultSetRowPacket row, int index, String name) throws IOException {
+        String value = row.getValue(index);
+        if (value == null) {
+            throw new IOException("Server returned NULL for " + name);
+        }
+        return value;
     }
 
     private void confirmSupportOfChecksum(ChecksumType checksumType) throws IOException {
