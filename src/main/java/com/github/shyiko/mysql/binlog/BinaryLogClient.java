@@ -1514,16 +1514,10 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      */
     private List<Map<String, String>> queryRows(String sql) throws IOException {
         channel.write(new QueryCommand(sql));
-        byte[] statementResult = channel.read();
-        checkError(statementResult);
         List<String> columns = new ArrayList<String>();
-        for (byte[] bytes; (bytes = channel.read())[0] != (byte) 0xFE /* eof */; ) {
-            columns.add(new ColumnDefinitionPacket(bytes).getName());
-        }
         List<Map<String, String>> rows = new ArrayList<Map<String, String>>();
-        for (byte[] bytes; (bytes = channel.read())[0] != (byte) 0xFE /* eof */; ) {
-            checkError(bytes);
-            String[] values = new ResultSetRowPacket(bytes).getValues();
+        for (ResultSetRowPacket resultSetRow : readResultSet(columns)) {
+            String[] values = resultSetRow.getValues();
             Map<String, String> row = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
             for (int i = 0; i < values.length && i < columns.size(); i++) {
                 row.put(columns.get(i), values[i]);
@@ -1534,11 +1528,22 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     }
 
     private ResultSetRowPacket[] readResultSet() throws IOException {
+        return readResultSet(null);
+    }
+
+    /**
+     * @param columnNames list to add the names of the columns to, null to skip the column definitions
+     */
+    private ResultSetRowPacket[] readResultSet(List<String> columnNames) throws IOException {
         List<ResultSetRowPacket> resultSet = new LinkedList<>();
         byte[] statementResult = channel.read();
         checkError(statementResult);
 
-        while ((channel.read())[0] != (byte) 0xFE /* eof */) { /* skip */ }
+        for (byte[] bytes; (bytes = channel.read())[0] != (byte) 0xFE /* eof */; ) {
+            if (columnNames != null) {
+                columnNames.add(new ColumnDefinitionPacket(bytes).getName());
+            }
+        }
         for (byte[] bytes; (bytes = channel.read())[0] != (byte) 0xFE /* eof */; ) {
             checkError(bytes);
             resultSet.add(new ResultSetRowPacket(bytes));
