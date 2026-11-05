@@ -1514,11 +1514,11 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      */
     private List<Map<String, String>> queryRows(String sql) throws IOException {
         channel.write(new QueryCommand(sql));
-        List<String> columns = new ArrayList<String>();
-        List<Map<String, String>> rows = new ArrayList<Map<String, String>>();
+        List<String> columns = new ArrayList<>();
+        List<Map<String, String>> rows = new ArrayList<>();
         for (ResultSetRowPacket resultSetRow : readResultSet(columns)) {
             String[] values = resultSetRow.getValues();
-            Map<String, String> row = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+            Map<String, String> row = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             for (int i = 0; i < values.length && i < columns.size(); i++) {
                 row.put(columns.get(i), values[i]);
             }

@@ -4,8 +4,6 @@ import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.network.SSLMode;
 import org.testng.annotations.Test;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -81,13 +79,10 @@ public class ServerFactsIntegrationTest extends AbstractIntegrationTest {
     private void startAtCurrentPosition(final BinaryLogClient factsClient) throws Exception {
         String status = !mysqlVersion.isMaria && mysqlVersion.atLeast(8, 4) ? "show binary log status" :
             "show master status";
-        master.query(status, new BinaryLogClientIntegrationTest.Callback<ResultSet>() {
-            @Override
-            public void execute(ResultSet rs) throws SQLException {
-                rs.next();
-                factsClient.setBinlogFilename(rs.getString("File"));
-                factsClient.setBinlogPosition(rs.getLong("Position"));
-            }
+        master.query(status, rs -> {
+            rs.next();
+            factsClient.setBinlogFilename(rs.getString("File"));
+            factsClient.setBinlogPosition(rs.getLong("Position"));
         });
     }
 
@@ -113,7 +108,7 @@ public class ServerFactsIntegrationTest extends AbstractIntegrationTest {
     }
 
     private ServerFacts connectAndReadFacts(BinaryLogClient factsClient) throws Exception {
-        final AtomicReference<ServerFacts> factsOnConnect = new AtomicReference<ServerFacts>();
+        final AtomicReference<ServerFacts> factsOnConnect = new AtomicReference<>();
         factsClient.registerLifecycleListener(new BinaryLogClient.AbstractLifecycleListener() {
             @Override
             public void onConnect(BinaryLogClient client) {
