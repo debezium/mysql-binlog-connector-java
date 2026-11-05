@@ -733,6 +733,9 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                     binlogPosition = 4;
                 }
                 setupConnection();
+                // outside setupConnection(), so that an override of it does not skip the facts
+                serverFacts = serverFactsEnabled ?
+                    new ServerFactsReader(this::queryRows, databaseVersion).read() : null;
                 gtid = null;
                 tx = false;
                 eventSeenSinceConnect = false;
@@ -809,7 +812,6 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         if (netReadTimeout > 0) {
             setNetReadTimeoutOnServer();
         }
-        serverFacts = serverFactsEnabled ? new ServerFactsReader(this::queryRows, databaseVersion).read() : null;
     }
 
     private PacketChannel openChannel() throws IOException {
