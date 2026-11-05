@@ -66,7 +66,7 @@ class ServerFactsReader {
     }
 
     private Map<String, String> readVariables() throws IOException {
-        Map<String, String> variables = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, String> variables = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         List<Map<String, String>> rows = query(VARIABLES_QUERY);
         if (rows != null) {
             for (Map<String, String> row : rows) {
@@ -86,7 +86,7 @@ class ServerFactsReader {
         if (rows == null) {
             return null;
         }
-        List<ServerFacts.ReplicationSource> sources = new ArrayList<ServerFacts.ReplicationSource>();
+        List<ServerFacts.ReplicationSource> sources = new ArrayList<>();
         for (Map<String, String> row : rows) {
             String channel = first(row, "Channel_Name", "Connection_name");
             if (channel == null) {

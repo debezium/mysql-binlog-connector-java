@@ -202,7 +202,7 @@ public class ServerFactsReaderTest {
     }
 
     private static Map<String, String> row(String... namesAndValues) {
-        Map<String, String> row = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, String> row = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (int i = 0; i < namesAndValues.length; i += 2) {
             row.put(namesAndValues[i], namesAndValues[i + 1]);
         }
@@ -215,12 +215,12 @@ public class ServerFactsReaderTest {
      */
     private static class FakeServer implements ServerFactsReader.QueryRunner {
 
-        private final Map<String, List<Map<String, String>>> results = new HashMap<String, List<Map<String, String>>>();
-        private final List<String> broken = new ArrayList<String>();
-        private final List<String> queries = new ArrayList<String>();
+        private final Map<String, List<Map<String, String>>> results = new HashMap<>();
+        private final List<String> broken = new ArrayList<>();
+        private final List<String> queries = new ArrayList<>();
 
         FakeServer variables(String... namesAndValues) {
-            List<Map<String, String>> rows = new ArrayList<Map<String, String>>();
+            List<Map<String, String>> rows = new ArrayList<>();
             for (int i = 0; i < namesAndValues.length; i += 2) {
                 rows.add(row("Variable_name", namesAndValues[i], "Value", namesAndValues[i + 1]));
             }
