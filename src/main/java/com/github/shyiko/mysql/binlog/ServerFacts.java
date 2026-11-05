@@ -148,7 +148,7 @@ public class ServerFacts {
 
         @Override
         public String toString() {
-            return (channel.isEmpty() ? "" : channel + "=") + host + ":" + port;
+            return (channel == null || channel.isEmpty() ? "" : channel + "=") + host + ":" + port;
         }
     }
 }
