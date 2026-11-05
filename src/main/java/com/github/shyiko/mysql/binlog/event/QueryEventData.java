@@ -25,6 +25,7 @@ public class QueryEventData implements EventData {
     private int errorCode;
     private String database;
     private String sql;
+    private String timeZone;
 
     public long getThreadId() {
         return threadId;
@@ -66,6 +67,20 @@ public class QueryEventData implements EventData {
         this.sql = sql;
     }
 
+    /**
+     * @return the time zone of the session that ran the statement, as recorded by the server, such as {@code SYSTEM},
+     * {@code +09:00} or {@code Asia/Seoul}. The server records it when the statement depends on it, for example when
+     * it contains a {@code TIMESTAMP} literal. Null if the event does not contain it, or if it follows a status
+     * variable that is not known, whose length cannot be determined; null does not mean UTC.
+     */
+    public String getTimeZone() {
+        return timeZone;
+    }
+
+    public void setTimeZone(String timeZone) {
+        this.timeZone = timeZone;
+    }
+
     @Override
     public String toString() {
         final StringBuilder sb = new StringBuilder();
@@ -75,6 +90,9 @@ public class QueryEventData implements EventData {
         sb.append(", errorCode=").append(errorCode);
         sb.append(", database='").append(database).append('\'');
         sb.append(", sql='").append(sql).append('\'');
+        if (timeZone != null) {
+            sb.append(", timeZone='").append(timeZone).append('\'');
+        }
         sb.append('}');
         return sb.toString();
     }
