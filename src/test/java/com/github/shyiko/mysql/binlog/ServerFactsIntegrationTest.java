@@ -64,16 +64,20 @@ public class ServerFactsIntegrationTest extends AbstractIntegrationTest {
     public void testRejectedStatementsDoNotFailTheConnect() throws Exception {
         master.execute("drop user if exists 'nofacts'");
         master.execute("create user 'nofacts' identified by 'testpass'");
-        master.execute("grant replication slave on *.* to 'nofacts'");
+        try {
+            master.execute("grant replication slave on *.* to 'nofacts'");
 
-        BinaryLogClient factsClient = newFactsClient(master, "nofacts", "testpass");
-        // without a position, the client reads the binary log status, which needs REPLICATION CLIENT too
-        startAtCurrentPosition(factsClient);
-        ServerFacts facts = connectAndReadFacts(factsClient);
+            BinaryLogClient factsClient = newFactsClient(master, "nofacts", "testpass");
+            // without a position, the client reads the binary log status, which needs REPLICATION CLIENT too
+            startAtCurrentPosition(factsClient);
+            ServerFacts facts = connectAndReadFacts(factsClient);
 
-        // the replica status needs REPLICATION CLIENT, while the variables need no privilege
-        assertNull(facts.getReplicationSources());
-        assertEquals(facts.getReadOnly(), Boolean.FALSE);
+            // the replica status needs REPLICATION CLIENT, while the variables need no privilege
+            assertNull(facts.getReplicationSources());
+            assertEquals(facts.getReadOnly(), Boolean.FALSE);
+        } finally {
+            master.execute("drop user if exists 'nofacts'");
+        }
     }
 
     private void startAtCurrentPosition(final BinaryLogClient factsClient) throws Exception {
