@@ -411,6 +411,8 @@ public class JsonBinary {
                     formatter.value((Boolean) value);
                 } else if (value instanceof Integer) {
                     formatter.value((Integer) value);
+                } else if (value instanceof Long) {
+                    formatter.value((Long) value);
                 }
             } else {
                 // Parse the value ...
@@ -545,6 +547,8 @@ public class JsonBinary {
                     formatter.value((Boolean) value);
                 } else if (value instanceof Integer) {
                     formatter.value((Integer) value);
+                } else if (value instanceof Long) {
+                    formatter.value((Long) value);
                 }
             } else {
                 // Parse the value ...
@@ -937,7 +941,7 @@ public class JsonBinary {
         int b2 = reader.read() & 0xFF;
         int b3 = reader.read() & 0xFF;
         int b4 = reader.read() & 0xFF;
-        return (long) ((b4 << 24) | (b3 << 16) | (b2 << 8) | b1) & 0xFFFFFFFF;
+        return (long) ((b4 << 24) | (b3 << 16) | (b2 << 8) | b1) & 0xFFFFFFFFL;
     }
 
     protected long readInt64() throws IOException {
