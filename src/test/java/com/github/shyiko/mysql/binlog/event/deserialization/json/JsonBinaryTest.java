@@ -32,4 +32,20 @@ public class JsonBinaryTest {
         };
         assertEquals(JsonBinary.parseAsString(json), "[100000,-100000]");
     }
+
+    @Test
+    public void testUInt32AboveIntegerMaxValue() throws Exception {
+        assertEquals(JsonBinary.parseAsString(new byte[] {
+            0x08, 0x00, 0x00, 0x00, (byte) 0x80 // UINT32 2147483648
+        }), "2147483648");
+        assertEquals(JsonBinary.parseAsString(new byte[] {
+            0x08, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF // UINT32 4294967295
+        }), "4294967295");
+        assertEquals(JsonBinary.parseAsString(new byte[] {
+            0x03, // large array
+            1, 0, 0, 0, // element count
+            13, 0, 0, 0, // size
+            0x08, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF // UINT32 4294967295, inlined
+        }), "[4294967295]");
+    }
 }

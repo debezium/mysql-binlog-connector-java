@@ -941,7 +941,7 @@ public class JsonBinary {
         int b2 = reader.read() & 0xFF;
         int b3 = reader.read() & 0xFF;
         int b4 = reader.read() & 0xFF;
-        return (long) ((b4 << 24) | (b3 << 16) | (b2 << 8) | b1) & 0xFFFFFFFF;
+        return (long) ((b4 << 24) | (b3 << 16) | (b2 << 8) | b1) & 0xFFFFFFFFL;
     }
 
     protected long readInt64() throws IOException {

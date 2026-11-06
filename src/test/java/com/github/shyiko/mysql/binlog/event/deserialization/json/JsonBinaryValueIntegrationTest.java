@@ -340,6 +340,14 @@ public class JsonBinaryValueIntegrationTest {
     }
 
     @Test
+    public void testJsonObjectWithUnsignedValuesAboveIntegerMaxValue() throws Exception {
+        assetJSONEquals(
+            writeAndCaptureJSON("JSON_OBJECT('a', CAST(2147483648 AS UNSIGNED), 'b', CAST(4294967295 AS UNSIGNED))"),
+            "{\"a\":2147483648,\"b\":4294967295}"
+        );
+    }
+
+    @Test
     public void testJsonObjectNested() throws Exception {
         assertJSONMatchOriginal("{\"a\":{\"b\":{\"c\":\"d\",\"e\":[\"f\",\"g\"]}}}");
     }
