@@ -411,6 +411,8 @@ public class JsonBinary {
                     formatter.value((Boolean) value);
                 } else if (value instanceof Integer) {
                     formatter.value((Integer) value);
+                } else if (value instanceof Long) {
+                    formatter.value((Long) value);
                 }
             } else {
                 // Parse the value ...
@@ -545,6 +547,8 @@ public class JsonBinary {
                     formatter.value((Boolean) value);
                 } else if (value instanceof Integer) {
                     formatter.value((Integer) value);
+                } else if (value instanceof Long) {
+                    formatter.value((Long) value);
                 }
             } else {
                 // Parse the value ...

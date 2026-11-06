@@ -323,6 +323,23 @@ public class JsonBinaryValueIntegrationTest {
     }
 
     @Test
+    public void testJsonObjectLargerThan64kWithUnsignedValue() throws Exception {
+        // Unsigned values from SQL are stored as UINT32, which the large format inlines
+        assetJSONEquals(
+            writeAndCaptureJSON("JSON_OBJECT('a', CAST(100000 AS UNSIGNED), 'pad', REPEAT('x', 70000))"),
+            "{\"a\":100000,\"pad\":\"" + repeatX(70000) + "\"}"
+        );
+    }
+
+    @Test
+    public void testJsonArrayLargerThan64kWithUnsignedValue() throws Exception {
+        assetJSONEquals(
+            writeAndCaptureJSON("JSON_ARRAY(CAST(100000 AS UNSIGNED), REPEAT('x', 70000))"),
+            "[100000,\"" + repeatX(70000) + "\"]"
+        );
+    }
+
+    @Test
     public void testJsonObjectNested() throws Exception {
         assertJSONMatchOriginal("{\"a\":{\"b\":{\"c\":\"d\",\"e\":[\"f\",\"g\"]}}}");
     }
@@ -541,6 +558,14 @@ public class JsonBinaryValueIntegrationTest {
         } else {
             assertEquals(actual, expected);
         }
+    }
+
+    private static String repeatX(int count) {
+        StringBuilder sb = new StringBuilder(count);
+        for (int i = 0; i < count; i++) {
+            sb.append('x');
+        }
+        return sb.toString();
     }
 
     private String writeAndCaptureJSON(final String value) throws Exception {
