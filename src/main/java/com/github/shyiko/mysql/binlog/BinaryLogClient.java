@@ -75,7 +75,6 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -157,8 +156,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
     private EventDeserializer eventDeserializer = new EventDeserializer();
 
-    private final List<EventListener> eventListeners = new CopyOnWriteArrayList<EventListener>();
-    private final List<LifecycleListener> lifecycleListeners = new CopyOnWriteArrayList<LifecycleListener>();
+    private final List<EventListener> eventListeners = new CopyOnWriteArrayList<>();
+    private final List<LifecycleListener> lifecycleListeners = new CopyOnWriteArrayList<>();
 
     private SocketFactory socketFactory;
     private SSLSocketFactory sslSocketFactory;
@@ -690,13 +689,13 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      * @throws IllegalStateException if binary log client is already connected
      */
     public void connect() throws IOException, IllegalStateException {
-        logger.fine("Trying to connect to " + hostname + ":" + port);
+        logger.fine(() -> "Trying to connect to " + hostname + ":" + port);
         if (!connectLock.tryLock()) {
             throw new IllegalStateException("BinaryLogClient is already connected");
         }
         boolean notifyWhenDisconnected = false;
         try {
-            Callable cancelDisconnect = null;
+            Callable<Void> cancelDisconnect = null;
             try {
                 try {
                     long start = System.currentTimeMillis();
@@ -728,9 +727,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                     fetchBinlogFilenameAndPosition();
                 }
                 if (binlogPosition < 4) {
-                    if (logger.isLoggable(Level.WARNING)) {
-                        logger.warning("Binary log position adjusted from " + binlogPosition + " to " + 4);
-                    }
+                    logger.warning(() -> "Binary log position adjusted from " + binlogPosition + " to " + 4);
                     binlogPosition = 4;
                 }
                 setupConnection();
@@ -749,10 +746,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                     try {
                         cancelDisconnect.call();
                     } catch (Exception e) {
-                        if (logger.isLoggable(Level.WARNING)) {
-                            logger.warning("\"" + e.getMessage() +
-                                "\" was thrown while canceling scheduled disconnect call");
-                        }
+                        logger.warning(() -> "\"" + e.getMessage() +
+                            "\" was thrown while canceling scheduled disconnect call");
                     }
                 }
             }
@@ -821,42 +816,29 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         return new PacketChannel(socket);
     }
 
-    private Callable scheduleDisconnectIn(final long timeout) {
-        final BinaryLogClient self = this;
+    private Callable<Void> scheduleDisconnectIn(final long timeout) {
         final CountDownLatch connectLatch = new CountDownLatch(1);
-        final Thread thread = newNamedThread(new Runnable() {
-            @Override
-            public void run() {
+        final Thread thread = newNamedThread(() -> {
+            try {
+                connectLatch.await(timeout, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                logger.log(Level.WARNING, e.getMessage());
+            }
+            if (connectLatch.getCount() != 0) {
+                logger.warning(() -> "Failed to establish connection in " + timeout + "ms. " +
+                    "Forcing disconnect.");
                 try {
-                    connectLatch.await(timeout, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException e) {
-                    if (logger.isLoggable(Level.WARNING)) {
-                        logger.log(Level.WARNING, e.getMessage());
-                    }
-                }
-                if (connectLatch.getCount() != 0) {
-                    if (logger.isLoggable(Level.WARNING)) {
-                        logger.warning("Failed to establish connection in " + timeout + "ms. " +
-                            "Forcing disconnect.");
-                    }
-                    try {
-                        self.disconnectChannel();
-                    } catch (IOException e) {
-                        if (logger.isLoggable(Level.WARNING)) {
-                            logger.log(Level.WARNING, e.getMessage());
-                        }
-                    }
+                    disconnectChannel();
+                } catch (IOException e) {
+                    logger.log(Level.WARNING, e.getMessage());
                 }
             }
         }, "blc-disconnect-" + hostname + ":" + port);
         thread.start();
-        return new Callable() {
-
-            public Object call() throws Exception {
-                connectLatch.countDown();
-                thread.join();
-                return null;
-            }
+        return () -> {
+            connectLatch.countDown();
+            thread.join();
+            return null;
         };
     }
 
@@ -990,7 +972,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             eventDataDeserializer.getClass() != EventDataWrapper.Deserializer.class) {
             EventDataDeserializer internalEventDataDeserializer;
             try {
-                internalEventDataDeserializer = eventDataDeserializerClass.newInstance();
+                internalEventDataDeserializer = eventDataDeserializerClass.getDeclaredConstructor().newInstance();
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -1048,12 +1030,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             });
         try {
             keepAliveThreadExecutorLock.lock();
-            threadExecutor.submit(new Runnable() {
-                @Override
-                public void run() {
-                    runKeepAlive(threadExecutor);
-                }
-            });
+            threadExecutor.submit(() -> runKeepAlive(threadExecutor));
             keepAliveThreadExecutor = threadExecutor;
         } finally {
             keepAliveThreadExecutorLock.unlock();
@@ -1145,21 +1122,17 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             }
         };
         registerLifecycleListener(connectListener);
-        final AtomicReference<IOException> exceptionReference = new AtomicReference<IOException>();
-        Runnable runnable = new Runnable() {
-
-            @Override
-            public void run() {
-                try {
-                    setConnectTimeout(timeout);
-                    connect();
-                } catch (IOException e) {
-                    exceptionReference.set(e);
-                    countDownLatch.countDown(); // making sure we don't end up waiting whole "timeout"
-                } catch (Exception e) {
-                    exceptionReference.set(new IOException(e)); // method is asynchronous, catch all exceptions so that they are not lost
-                    countDownLatch.countDown(); // making sure we don't end up waiting whole "timeout"
-                }
+        final AtomicReference<IOException> exceptionReference = new AtomicReference<>();
+        Runnable runnable = () -> {
+            try {
+                setConnectTimeout(timeout);
+                connect();
+            } catch (IOException e) {
+                exceptionReference.set(e);
+                countDownLatch.countDown(); // making sure we don't end up waiting whole "timeout"
+            } catch (Exception e) {
+                exceptionReference.set(new IOException(e)); // method is asynchronous, catch all exceptions so that they are not lost
+                countDownLatch.countDown(); // making sure we don't end up waiting whole "timeout"
             }
         };
         newNamedThread(runnable, "blc-" + hostname + ":" + port).start();
@@ -1167,9 +1140,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         try {
             started = countDownLatch.await(timeout, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
-            if (logger.isLoggable(Level.WARNING)) {
-                logger.log(Level.WARNING, e.getMessage());
-            }
+            logger.log(Level.WARNING, e.getMessage());
         }
         unregisterLifecycleListener(connectListener);
         if (exceptionReference.get() != null) {
@@ -1505,7 +1476,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private void commitGtid() {
         if (gtid != null) {
             synchronized (gtidSetAccessLock) {
-                logger.finest("Adding GTID " + gtid);
+                logger.finest(() -> "Adding GTID " + gtid);
                 gtidSet.addGtid(gtid);
             }
         }
@@ -1537,7 +1508,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      * @param columnNames list to add the names of the columns to, null to skip the column definitions
      */
     private ResultSetRowPacket[] readResultSet(List<String> columnNames) throws IOException {
-        List<ResultSetRowPacket> resultSet = new LinkedList<>();
+        List<ResultSetRowPacket> resultSet = new ArrayList<>();
         byte[] statementResult = channel.read();
         checkError(statementResult);
 
@@ -1550,7 +1521,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             checkError(bytes);
             resultSet.add(new ResultSetRowPacket(bytes));
         }
-        return resultSet.toArray(new ResultSetRowPacket[resultSet.size()]);
+        return resultSet.toArray(new ResultSetRowPacket[0]);
     }
 
     /**
@@ -1574,11 +1545,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 	 * @param listenerClass event listener class to unregister
      */
     public void unregisterEventListener(Class<? extends EventListener> listenerClass) {
-        for (EventListener eventListener: eventListeners) {
-            if (listenerClass.isInstance(eventListener)) {
-                eventListeners.remove(eventListener);
-            }
-        }
+        eventListeners.removeIf(listenerClass::isInstance);
     }
 
     /**
@@ -1609,9 +1576,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             try {
                 lifecycleListener.onCommunicationFailure(this, e);
             } catch (Exception le) {
-                if (logger.isLoggable(Level.WARNING)) {
-                    logger.log(Level.WARNING, lifecycleListener + " choked on " + e, le);
-                }
+                logger.log(Level.WARNING, le, () -> lifecycleListener + " choked on " + e);
             }
         }
     }
@@ -1621,9 +1586,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             try {
                 lifecycleListener.onReconnectAbandoned(this, cause, failedAttempts);
             } catch (Exception le) {
-                if (logger.isLoggable(Level.WARNING)) {
-                    logger.log(Level.WARNING, lifecycleListener + " choked on " + cause, le);
-                }
+                logger.log(Level.WARNING, le, () -> lifecycleListener + " choked on " + cause);
             }
         }
     }
@@ -1649,11 +1612,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 	 * @param listenerClass lifecycle listener class to unregister
      */
     public void unregisterLifecycleListener(Class<? extends LifecycleListener> listenerClass) {
-        for (LifecycleListener lifecycleListener : lifecycleListeners) {
-            if (listenerClass.isInstance(lifecycleListener)) {
-                lifecycleListeners.remove(lifecycleListener);
-            }
-        }
+        lifecycleListeners.removeIf(listenerClass::isInstance);
     }
 
     /**
@@ -1670,7 +1629,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      * As the result following {@link #connect()} resumes client from where it left off.
      */
     public void disconnect() throws IOException {
-        logger.fine("Disconnecting from " + hostname + ":" + port);
+        logger.fine(() -> "Disconnecting from " + hostname + ":" + port);
         terminateKeepAliveThread();
         terminateConnect();
     }
