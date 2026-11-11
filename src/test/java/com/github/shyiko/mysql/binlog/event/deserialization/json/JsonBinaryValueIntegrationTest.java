@@ -509,6 +509,21 @@ public class JsonBinaryValueIntegrationTest {
     }
 
     @Test
+    public void testScalarNegativeTime() throws Exception {
+        if ( isMaria )
+            throw new SkipException("");
+
+        assertEquals(writeAndCaptureJSON("CAST(CAST('-01:30:15.5' AS TIME(1)) AS JSON)"),
+            "\"-01:30:15.5\"");
+        assertEquals(writeAndCaptureJSON("CAST(CAST('-01:00:00' AS TIME) AS JSON)"),
+            "\"-01:00:00\"");
+        assertEquals(writeAndCaptureJSON("CAST(CAST('-00:00:01' AS TIME) AS JSON)"),
+            "\"-00:00:01\"");
+        assertEquals(writeAndCaptureJSON("CAST(CAST('-00:00:00.5' AS TIME(1)) AS JSON)"),
+            "\"-00:00:00.5\"");
+    }
+
+    @Test
     public void testScalarDate() throws Exception {
         if ( isMaria )
             throw new SkipException("");

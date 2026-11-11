@@ -807,16 +807,18 @@ public class JsonBinary {
      */
     protected void parseTime(JsonFormatter formatter) throws IOException {
         long raw = readInt64();
-        long value = raw >> 24;
-        boolean negative = value < 0L;
-        int hour = (int) (value >> 12) % (1 << 10); // 10 bits starting at 12th
-        int min = (int) (value >> 6) % (1 << 6); // 6 bits starting at 6th
-        int sec = (int) value % (1 << 6); // 6 bits starting at 0th
+        // A negative time is the negation of the whole packed value, including the fractional part,
+        // so the fields can only be read from its magnitude
+        boolean negative = raw < 0L;
         if (negative) {
-            hour *= -1;
+            raw = -raw;
         }
+        long value = raw >> 24;
+        int hour = (int) ((value >> 12) % (1 << 10)); // 10 bits starting at 12th
+        int min = (int) ((value >> 6) % (1 << 6)); // 6 bits starting at 6th
+        int sec = (int) (value % (1 << 6)); // 6 bits starting at 0th
         int microSeconds = (int) (raw % (1 << 24));
-        formatter.valueTime(hour, min, sec, microSeconds);
+        formatter.valueTime(negative, hour, min, sec, microSeconds);
     }
 
     /**

@@ -192,10 +192,14 @@ public class JsonStringFormatter implements JsonFormatter {
 
     @Override
     public void valueTime(int hour, int min, int sec, int microSeconds) {
+        valueTime(hour < 0, Math.abs(hour), min, sec, microSeconds);
+    }
+
+    @Override
+    public void valueTime(boolean negative, int hour, int min, int sec, int microSeconds) {
         sb.append('"');
-        if (hour < 0) {
+        if (negative) {
             sb.append('-');
-            hour = Math.abs(hour);
         }
         appendTime(hour, min, sec, microSeconds);
         sb.append('"');

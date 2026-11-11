@@ -154,6 +154,23 @@ public interface JsonFormatter {
     void valueTime(int hour, int min, int sec, int microSeconds);
 
     /**
+     * Receive the time value of an element in a JSON object, with its sign given separately from its fields.
+     * {@link #valueTime(int, int, int, int)} takes the sign from the hour, so it cannot express a negative time
+     * whose hour is zero, such as {@code -00:00:01}.
+     * <p>
+     * By default, this method calls {@link #valueTime(int, int, int, int)} with a negated hour for a negative time.
+     *
+     * @param negative true if the element's time value is negative
+     * @param hour the hours in the element's time value, never negative
+     * @param min the minutes of the hour (0-60) in the element's time value
+     * @param sec the seconds of the minute (0-60) in the element's time value
+     * @param microSeconds the number of microseconds in the element's time value
+     */
+    default void valueTime(boolean negative, int hour, int min, int sec, int microSeconds) {
+        valueTime(negative ? -hour : hour, min, sec, microSeconds);
+    }
+
+    /**
      * Receive the timestamp value of an element in a JSON object.
      *
      * @param secondsPastEpoch the number of seconds past epoch (January 1, 1970) in the element's timestamp value
