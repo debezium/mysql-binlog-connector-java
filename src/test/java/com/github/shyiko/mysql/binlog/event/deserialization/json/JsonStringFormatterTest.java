@@ -31,6 +31,24 @@ public class JsonStringFormatterTest {
         assertEquals(formatter.getString(), "\"test\"");
     }
 
+    @Test
+    public void testFormatTime() {
+        assertTime(false, 1, 2, 3, 0, "\"01:02:03\"");
+        assertTime(true, 1, 2, 3, 0, "\"-01:02:03\"");
+        assertTime(true, 0, 0, 1, 0, "\"-00:00:01\"");
+        assertTime(true, 0, 0, 0, 500000, "\"-00:00:00.5\"");
+
+        JsonStringFormatter json = new JsonStringFormatter();
+        json.valueTime(-1, 2, 3, 0);
+        assertEquals(json.getString(), "\"-01:02:03\"");
+    }
+
+    private static void assertTime(boolean negative, int hour, int min, int sec, int microSeconds, String expected) {
+        JsonStringFormatter json = new JsonStringFormatter();
+        json.valueTime(negative, hour, min, sec, microSeconds);
+        assertEquals(json.getString(), expected);
+    }
+
     private static void assertLong(long value, String expected) {
         JsonStringFormatter json = new JsonStringFormatter();
         json.value(value);
