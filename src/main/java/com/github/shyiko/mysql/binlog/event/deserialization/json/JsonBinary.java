@@ -855,7 +855,8 @@ public class JsonBinary {
         int month = yearMonth % 13;
         int day = (int) (value >> 17) % (1 << 5); // 5 bits starting at 17th
         int hour = (int) (value >> 12) % (1 << 5); // 5 bits starting at 12th
-        int min = (int) (value >> 6) % (1 << 6); // 6 bits starting at 6th
+        // value >> 6 is 33 bits wide, so the minutes are taken before narrowing it to an int
+        int min = (int) ((value >> 6) % (1 << 6)); // 6 bits starting at 6th
         int sec = (int) (value % (1 << 6)); // 6 bits starting at 0th
         int microSeconds = (int) (raw % (1 << 24));
         formatter.valueDatetime(year, month, day, hour, min, sec, microSeconds);

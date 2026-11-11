@@ -487,6 +487,19 @@ public class JsonBinaryValueIntegrationTest {
     }
 
     @Test
+    public void testScalarDateTimeInLargeYears() throws Exception {
+        if ( isMaria )
+            throw new SkipException("");
+
+        assertEquals(writeAndCaptureJSON("CAST(CAST('2520-08-01 23:59:59' AS DATETIME) AS JSON)"),
+            "\"2520-08-01 23:59:59\"");
+        assertEquals(writeAndCaptureJSON("CAST(CAST('9999-12-31 23:59:59.999999' AS DATETIME(6)) AS JSON)"),
+            "\"9999-12-31 23:59:59.999999\"");
+        assertEquals(writeAndCaptureJSON("CAST(TIMESTAMP'9999-12-31 12:30:00' AS JSON)"),
+            "\"9999-12-31 12:30:00\"");
+    }
+
+    @Test
     public void testScalarDateTime() throws Exception {
         if ( isMaria )
             throw new SkipException("");
