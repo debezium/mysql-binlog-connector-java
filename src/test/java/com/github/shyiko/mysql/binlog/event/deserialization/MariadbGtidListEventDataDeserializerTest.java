@@ -2,11 +2,11 @@ package com.github.shyiko.mysql.binlog.event.deserialization;
 
 import com.github.shyiko.mysql.binlog.event.MariadbGtidListEventData;
 import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
-import org.junit.Test;
+import org.testng.annotations.Test;
 
 import java.io.IOException;
 
-import static junit.framework.Assert.assertEquals;
+import static org.testng.Assert.assertEquals;
 
 /**
  * @author <a href="mailto:winger2049@gmail.com">Winger</a>
@@ -21,6 +21,6 @@ public class MariadbGtidListEventDataDeserializerTest {
     public void deserialize() throws IOException {
         MariadbGtidListEventDataDeserializer deserializer = new MariadbGtidListEventDataDeserializer();
         MariadbGtidListEventData eventData = deserializer.deserialize(new ByteArrayInputStream(DATA));
-        assertEquals(GTID_SET_LIST, eventData.toString());
+        assertEquals(eventData.toString(), GTID_SET_LIST);
     }
 }

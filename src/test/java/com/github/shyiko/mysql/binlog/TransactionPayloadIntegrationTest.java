@@ -24,6 +24,10 @@ public class TransactionPayloadIntegrationTest extends AbstractIntegrationTest {
 
     @Override
     protected TestDatabaseContainerOptions getOptions() {
+        if (TestDatabaseContainer.getVersion().isMaria) {
+            // MariaDB does not start with the options below
+            throw new SkipException("Transaction compression requires MySQL 8.0.20+");
+        }
         TestDatabaseContainerOptions options = super.getOptions();
         // Enable transaction compression (requires MySQL 8.0.20+)
         options.extraParams = "--binlog-transaction-compression=ON --binlog-transaction-compression-level-zstd=3";

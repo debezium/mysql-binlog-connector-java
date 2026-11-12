@@ -2,11 +2,11 @@ package com.github.shyiko.mysql.binlog.event.deserialization;
 
 import com.github.shyiko.mysql.binlog.event.AnnotateRowsEventData;
 import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
-import org.junit.Test;
+import org.testng.annotations.Test;
 
 import java.io.IOException;
 
-import static junit.framework.Assert.assertEquals;
+import static org.testng.Assert.assertEquals;
 
 /**
  * @author <a href="mailto:winger2049@gmail.com">Winger</a>
@@ -22,6 +22,6 @@ public class AnnotateRowsEventDataDeserializerTest {
         AnnotateRowsEventDataDeserializer deserializer = new AnnotateRowsEventDataDeserializer();
         AnnotateRowsEventData eventData = deserializer.deserialize(new ByteArrayInputStream(DATA));
 
-        assertEquals(sql, eventData.getRowsQuery());
+        assertEquals(eventData.getRowsQuery(), sql);
     }
 }

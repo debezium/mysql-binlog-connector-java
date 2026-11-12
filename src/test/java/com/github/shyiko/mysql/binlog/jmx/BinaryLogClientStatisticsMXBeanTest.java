@@ -16,7 +16,7 @@
 package com.github.shyiko.mysql.binlog.jmx;
 
 import com.github.shyiko.mysql.binlog.BinaryLogClient;
-import org.junit.Test;
+import org.testng.annotations.Test;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;

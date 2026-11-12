@@ -61,7 +61,7 @@
         <dependency>
             <groupId>org.testng</groupId>
             <artifactId>testng</artifactId>
-            <version>6.8.5</version>
+            <version>7.12.0</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -241,6 +241,13 @@
                     <includes>
                         <include>**/*IntegrationTest.java</include>
                     </includes>
+                    <properties>
+                        <!-- a class that skips itself must not skip the classes that run after it -->
+                        <property>
+                            <name>configfailurepolicy</name>
+                            <value>continue</value>
+                        </property>
+                    </properties>
                     <systemPropertyVariables>
                         <mysql.image>${mysql.image}</mysql.image>
                     </systemPropertyVariables>

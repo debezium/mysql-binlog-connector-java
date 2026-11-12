@@ -4,10 +4,10 @@ import com.github.shyiko.mysql.binlog.MariadbGtidSet.MariaGtid;
 import com.github.shyiko.mysql.binlog.event.MySqlGtid;
 import org.testng.annotations.Test;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.assertTrue;
 
 /**
  * @author <a href="mailto:winger2049@gmail.com">Winger</a>
