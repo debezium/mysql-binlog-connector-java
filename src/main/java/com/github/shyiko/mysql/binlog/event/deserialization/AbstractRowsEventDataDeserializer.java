@@ -22,6 +22,7 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.BitSet;
 import java.util.Calendar;
 import java.util.Map;
@@ -443,7 +444,12 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
         if (month == 0 || day == 0) {
             return invalidDateAndTimeRepresentation;
         }
-        return UnixTime.from(year, month, day, hour, minute, second, millis);
+        // A long is the number of milliseconds since the epoch, and MySQL uses the proleptic Gregorian calendar.
+        // java.util.Date and its subclasses show the date they were made for only with the Julian calendar before
+        // the cutover, so they keep it.
+        return deserializeDateAndTimeAsLong ?
+            UnixTime.fromProlepticGregorian(year, month, day, hour, minute, second, millis) :
+            UnixTime.from(year, month, day, hour, minute, second, millis);
     }
 
     protected int deserializeFractionalSeconds(int meta, ByteArrayInputStream inputStream) throws IOException {
@@ -557,7 +563,7 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
          */
         // checkstyle, please ignore ParameterNumber for the next line
         public static long from(int year, int month, int day, int hour, int minute, int second, int millis) {
-            if (year < 1582 || (year == 1582 && (month < 10 || (month == 10 && day < 15)))) {
+            if (isBeforeGregorianCutover(year, month, day)) {
                 return fallbackToGC(year, month, day, hour, minute, second, millis);
             }
             long timestamp = 0;
@@ -569,6 +575,35 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
                 (hour * 60 * 60) + (minute * 60) + (second);
             timestamp = timestamp * 1000 + millis;
             return timestamp;
+        }
+
+        /**
+         * Same as {@link #from(int, int, int, int, int, int, int)}, but with the Gregorian calendar before
+         * October 15, 1582 too, as MySQL and java.time have it. There, {@code from} follows the Julian calendar.
+         *
+         * @param year year
+         * @param month month [1..12]
+         * @param day day [1..)
+         * @param hour hour [0..23]
+         * @param minute [0..59]
+         * @param second [0..59]
+         * @param millis [0..999]
+         *
+         * @return Unix time in milliseconds
+         */
+        // checkstyle, please ignore ParameterNumber for the next line
+        public static long fromProlepticGregorian(int year, int month, int day, int hour, int minute, int second,
+                                                  int millis) {
+            if (!isBeforeGregorianCutover(year, month, day)) {
+                return from(year, month, day, hour, minute, second, millis);
+            }
+            // counting from the first of the month accepts a day past its end, as from() does
+            long days = LocalDate.of(year, month, 1).toEpochDay() + day - 1;
+            return (((days * 24 + hour) * 60 + minute) * 60 + second) * 1000 + millis;
+        }
+
+        private static boolean isBeforeGregorianCutover(int year, int month, int day) {
+            return year < 1582 || (year == 1582 && (month < 10 || (month == 10 && day < 15)));
         }
 
         // checkstyle, please ignore ParameterNumber for the next line
