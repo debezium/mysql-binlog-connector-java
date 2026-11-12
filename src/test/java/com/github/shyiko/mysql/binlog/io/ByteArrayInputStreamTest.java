@@ -6,6 +6,21 @@ import static org.testng.Assert.assertEquals;
 
 public class ByteArrayInputStreamTest {
     @Test
+    public void testReadStringAsUtf8() throws Exception {
+        byte[] name = "주문".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        ByteArrayInputStream in = new ByteArrayInputStream(name);
+        assertEquals(in.readString(name.length), "주문");
+    }
+
+    @Test
+    public void testReadZeroTerminatedStringAsUtf8() throws Exception {
+        byte[] name = "주문".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] terminated = java.util.Arrays.copyOf(name, name.length + 1);
+        ByteArrayInputStream in = new ByteArrayInputStream(terminated);
+        assertEquals(in.readZeroTerminatedString(), "주문");
+    }
+
+    @Test
     public void testReadToArray() throws Exception {
         byte[] buff = new byte[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
         ByteArrayInputStream in = new ByteArrayInputStream(buff);

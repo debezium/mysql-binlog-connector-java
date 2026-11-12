@@ -164,7 +164,7 @@ public class JsonBinary {
     public static String parseAsString(byte[] bytes) throws IOException {
         /* check for mariaDB-format JSON strings inside columns marked JSON */
         if ( isJSONString(bytes) ) {
-            return new String(bytes);
+            return new String(bytes, UTF_8);
         }
         JsonStringFormatter handler = new JsonStringFormatter();
         parse(bytes, handler);

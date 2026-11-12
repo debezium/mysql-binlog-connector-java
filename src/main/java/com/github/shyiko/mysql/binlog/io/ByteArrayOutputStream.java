@@ -17,6 +17,7 @@ package com.github.shyiko.mysql.binlog.io;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 
 /**
  * @author <a href="mailto:stanley.shyiko@gmail.com">Stanley Shyiko</a>
@@ -58,7 +59,7 @@ public class ByteArrayOutputStream extends OutputStream {
     }
 
     public void writeString(String value) throws IOException {
-        write(value.getBytes());
+        write(value.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -68,7 +69,7 @@ public class ByteArrayOutputStream extends OutputStream {
      */
     public void writeZeroTerminatedString(String value) throws IOException {
         if ( value != null )
-            write(value.getBytes());
+            write(value.getBytes(StandardCharsets.UTF_8));
 
         write(0);
     }

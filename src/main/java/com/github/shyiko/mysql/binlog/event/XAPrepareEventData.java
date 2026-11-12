@@ -15,6 +15,7 @@
  */
 package com.github.shyiko.mysql.binlog.event;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -67,8 +68,8 @@ public class XAPrepareEventData implements EventData {
 
     public void setData(byte[] data) {
         this.data = data;
-        gtrid = new String(data, 0, gtridLength);
-        bqual = new String(data, gtridLength, bqualLength);
+        gtrid = new String(data, 0, gtridLength, StandardCharsets.UTF_8);
+        bqual = new String(data, gtridLength, bqualLength, StandardCharsets.UTF_8);
     }
 
     public String getGtrid() {

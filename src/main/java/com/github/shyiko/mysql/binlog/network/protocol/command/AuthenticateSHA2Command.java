@@ -19,6 +19,7 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayOutputStream;
 import com.github.shyiko.mysql.binlog.network.ClientCapabilities;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.DigestException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -117,7 +118,8 @@ public class AuthenticateSHA2Command implements Command {
             byte[] scramble1 = new byte[CACHING_SHA2_DIGEST_LENGTH];
 
             // SHA2(src) => digest_stage1
-            md.update(password.getBytes(), 0, password.getBytes().length);
+            byte[] passwordBytes = password.getBytes(StandardCharsets.UTF_8);
+            md.update(passwordBytes, 0, passwordBytes.length);
             md.digest(dig1, 0, CACHING_SHA2_DIGEST_LENGTH);
             md.reset();
 
@@ -128,7 +130,8 @@ public class AuthenticateSHA2Command implements Command {
 
             // SHA2(digest_stage2, m_rnd) => scramble_stage1
             md.update(dig2, 0, dig1.length);
-            md.update(scramble.getBytes(), 0, scramble.getBytes().length);
+            byte[] scrambleBytes = scramble.getBytes(StandardCharsets.UTF_8);
+            md.update(scrambleBytes, 0, scrambleBytes.length);
             md.digest(scramble1, 0, CACHING_SHA2_DIGEST_LENGTH);
 
             // XOR(digest_stage1, scramble_stage1) => scramble

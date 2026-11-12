@@ -8,6 +8,7 @@ import com.github.shyiko.mysql.binlog.network.protocol.PacketChannel;
 import com.github.shyiko.mysql.binlog.network.protocol.command.*;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -132,7 +133,7 @@ public class Authenticator {
                     stream.read(rsaKey);
 
                     logger.log(Level.FINE, "received RSA key: " + rsaKey);
-                    Command c = new AuthenticateSHA2RSAPasswordCommand(new String(rsaKey), password, scramble);
+                    Command c = new AuthenticateSHA2RSAPasswordCommand(new String(rsaKey, StandardCharsets.UTF_8), password, scramble);
                     channel.write(c);
 
                     readResult();
