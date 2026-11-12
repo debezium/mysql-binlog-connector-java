@@ -41,6 +41,15 @@ public class QueryEventDataDeserializerTest {
     }
 
     @Test
+    public void testDeserializeNonAsciiDatabaseAndSql() throws IOException {
+        QueryEventData data = deserializer.deserialize(event(bytes(0, 0, 0, 0, 0), "주문",
+            "alter table t comment '주문 테이블'"));
+
+        assertEquals(data.getDatabase(), "주문");
+        assertEquals(data.getSql(), "alter table t comment '주문 테이블'");
+    }
+
+    @Test
     public void testDeserializeWithTimeZoneAfterCharacterSetCollations() throws IOException {
         // as MariaDB 11.8 writes them for "create table ... default charset = utf8mb4"
         byte[] statusVariables = concat(

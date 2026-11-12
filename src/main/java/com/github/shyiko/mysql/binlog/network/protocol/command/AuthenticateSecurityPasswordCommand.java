@@ -19,6 +19,7 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayOutputStream;
 import com.github.shyiko.mysql.binlog.network.ClientCapabilities;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
@@ -97,8 +98,8 @@ public class AuthenticateSecurityPasswordCommand implements Command {
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
         }
-        byte[] passwordHash = sha.digest(password.getBytes());
-        return CommandUtils.xor(passwordHash, sha.digest(union(salt.getBytes(), sha.digest(passwordHash))));
+        byte[] passwordHash = sha.digest(password.getBytes(StandardCharsets.UTF_8));
+        return CommandUtils.xor(passwordHash, sha.digest(union(salt.getBytes(StandardCharsets.UTF_8), sha.digest(passwordHash))));
     }
 
     private static byte[] union(byte[] a, byte[] b) {

@@ -22,6 +22,27 @@ public class JsonBinaryTest {
     }
 
     @Test
+    public void testNonAsciiKey() throws Exception {
+        byte[] key = "키".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] json = new byte[] {
+            0x00, // small object
+            1, 0, // element count
+            14, 0, // size
+            11, 0, 3, 0, // key: offset 11, length 3
+            0x05, 1, 0, // INT16 1, inlined
+            key[0], key[1], key[2]
+        };
+        assertEquals(JsonBinary.parseAsString(json), "{\"키\":1}");
+    }
+
+    @Test
+    public void testNonAsciiJsonString() throws Exception {
+        // MariaDB stores JSON as text
+        String json = "{\"키\": \"값\"}";
+        assertEquals(JsonBinary.parseAsString(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)), json);
+    }
+
+    @Test
     public void testInlinedUInt32InLargeArray() throws Exception {
         byte[] json = new byte[] {
             0x03, // large array

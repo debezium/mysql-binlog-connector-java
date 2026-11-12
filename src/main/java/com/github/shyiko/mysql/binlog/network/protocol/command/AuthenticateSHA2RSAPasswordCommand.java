@@ -5,6 +5,7 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayOutputStream;
 
 import javax.crypto.Cipher;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.X509EncodedKeySpec;
@@ -29,7 +30,7 @@ public class AuthenticateSHA2RSAPasswordCommand implements Command {
         ByteArrayOutputStream passBuffer = new ByteArrayOutputStream();
         passBuffer.writeZeroTerminatedString(password);
 
-        byte[] xorBuffer = CommandUtils.xor(passBuffer.toByteArray(), scramble.getBytes());
+        byte[] xorBuffer = CommandUtils.xor(passBuffer.toByteArray(), scramble.getBytes(StandardCharsets.UTF_8));
         return encrypt(xorBuffer, key, RSA_METHOD);
     }
 
@@ -39,7 +40,7 @@ public class AuthenticateSHA2RSAPasswordCommand implements Command {
         String innerKey = key.substring(beginIndex, endIndex).replaceAll("\\n", "");
 
         Base64.Decoder decoder = Base64.getDecoder();
-        byte[] certificateData = decoder.decode(innerKey.getBytes());
+        byte[] certificateData = decoder.decode(innerKey.getBytes(StandardCharsets.UTF_8));
 
         X509EncodedKeySpec spec = new X509EncodedKeySpec(certificateData);
         try {

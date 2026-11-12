@@ -228,6 +228,9 @@
                     <excludes>
                         <exclude>**/*IntegrationTest.java</exclude>
                     </excludes>
+                    <!-- the client must not depend on the default charset of the JVM, which follows the locale
+                         up to Java 17 -->
+                    <argLine>-Dfile.encoding=US-ASCII</argLine>
                     <systemPropertyVariables>
                         <mysql.image>${mysql.image}</mysql.image>
                     </systemPropertyVariables>

@@ -18,6 +18,7 @@ package com.github.shyiko.mysql.binlog.io;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 
 /**
@@ -75,7 +76,7 @@ public class ByteArrayInputStream extends InputStream {
 	 * @return string
      */
     public String readString(int length) throws IOException {
-        return new String(read(length));
+        return new String(read(length), StandardCharsets.UTF_8);
     }
 
     /**
@@ -97,7 +98,7 @@ public class ByteArrayInputStream extends InputStream {
         for (int b; (b = this.read()) != 0; ) {
             s.writeInteger(b, 1);
         }
-        return new String(s.toByteArray());
+        return new String(s.toByteArray(), StandardCharsets.UTF_8);
     }
 
     public byte[] read(int length) throws IOException {

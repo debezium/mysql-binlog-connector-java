@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Convert between bytes and strings as UTF-8 instead of the default charset of the JVM
+  (debezium/dbz#3079). Up to Java 17 that charset follows the locale, so in a container without a
+  UTF-8 locale, database, table and column names, SQL statements and JSON keys with non-ASCII
+  characters were mangled, and a non-ASCII password was hashed from the wrong bytes. `CHAR` and
+  `VARCHAR` values that are returned as `String` are decoded as UTF-8 as well; use
+  `CompatibilityMode.CHAR_AND_BINARY_AS_BYTE_ARRAY` for columns in another charset.
 - Require Java 17 (debezium/dbz#3069). The compiler target moves from Java 8 to Java 17, the
   target of the Debezium connectors. Releases up to 0.41.5 keep running on Java 8 or later.
 - Stop failing silently when a connection can no longer be restored (debezium/dbz#1474). Previously
