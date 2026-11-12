@@ -60,6 +60,7 @@ import java.sql.Statement;
 import java.util.AbstractMap;
 import java.util.Base64;
 import java.util.BitSet;
+import java.time.LocalDate;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashSet;
@@ -235,6 +236,13 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
     public void testDeserializationOfDATE() throws Exception {
         assertEquals(writeAndCaptureRow("date", "'1989-03-21'"), new Serializable[]{
             generateTime(1989, 3, 21, 0, 0, 0, 0)});
+        // MySQL has the Gregorian calendar before its cutover in 1582 too
+        assertEquals(writeAndCaptureRow("date", "'1000-01-01'"), new Serializable[]{
+            generateProlepticGregorianTime(1000, 1, 1)});
+        assertEquals(writeAndCaptureRow("date", "'1582-10-04'"), new Serializable[]{
+            generateProlepticGregorianTime(1582, 10, 4)});
+        assertEquals(writeAndCaptureRow("date", "'1582-10-15'"), new Serializable[]{
+            generateTime(1582, 10, 15, 0, 0, 0, 0)});
         final boolean[] noZeroInDate = new boolean[1];
         master.query("select @@sql_mode;", new Callback<ResultSet>() {
 
@@ -248,7 +256,7 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
             assertEquals(writeAndCaptureRow("date", "'0000-00-00'"), new Serializable[]{null});
             // a zero year with a valid month and day is a date, a zero month or day is not
             assertEquals(writeAndCaptureRow("date", "'0000-03-21'"), new Serializable[]{
-                generateTime(0, 3, 21, 0, 0, 0, 0)});
+                generateProlepticGregorianTime(0, 3, 21)});
             assertEquals(writeAndCaptureRow("date", "'1989-00-21'"), new Serializable[]{null});
             assertEquals(writeAndCaptureRow("date", "'1989-03-00'"), new Serializable[]{null});
         }
@@ -270,6 +278,8 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
     public void testDeserializationOfDATETIME() throws Exception {
         assertEquals(writeAndCaptureRow("datetime", "'1989-03-21 01:02:03.000000'"), new Serializable[]{
             generateTime(1989, 3, 21, 1, 2, 3, 0)});
+        assertEquals(writeAndCaptureRow("datetime", "'1000-01-01 01:02:03.000000'"), new Serializable[]{
+            generateProlepticGregorianTime(1000, 1, 1) + ((1 * 60 + 2) * 60 + 3) * 1000});
     }
 
     @Test
@@ -458,6 +468,10 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
     }
 
     // checkstyle, please ignore ParameterNumber for the next line
+    private long generateProlepticGregorianTime(int year, int month, int day) {
+        return LocalDate.of(year, month, day).toEpochDay() * 24 * 60 * 60 * 1000;
+    }
+
     private long generateTime(int year, int month, int day, int hour, int minute, int second, int millisecond) {
         Calendar instance = Calendar.getInstance();
         instance.set(Calendar.YEAR, year);

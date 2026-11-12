@@ -69,6 +69,57 @@ public class AbstractRowsEventDataDeserializerTest {
             invalidDate);
     }
 
+    @Test
+    public void testFromProlepticGregorian() throws Exception {
+        assetTimeEquals(UnixTime.fromProlepticGregorian(1, 1, 1, 0, 0, 0, 0), isoTimestamp(1, 1, 1));
+        assetTimeEquals(UnixTime.fromProlepticGregorian(1000, 1, 1, 0, 0, 0, 0), isoTimestamp(1000, 1, 1));
+        assetTimeEquals(UnixTime.fromProlepticGregorian(1582, 10, 4, 0, 0, 0, 0), isoTimestamp(1582, 10, 4));
+        // these ten days do not exist in the calendar of from()
+        assetTimeEquals(UnixTime.fromProlepticGregorian(1582, 10, 10, 0, 0, 0, 0), isoTimestamp(1582, 10, 10));
+        assetTimeEquals(UnixTime.fromProlepticGregorian(1582, 10, 14, 23, 59, 59, 999),
+            isoTimestamp(1582, 10, 15) - 1);
+        assetTimeEquals(UnixTime.fromProlepticGregorian(0, 3, 21, 0, 0, 0, 0), isoTimestamp(0, 3, 21));
+        assetTimeEquals(UnixTime.fromProlepticGregorian(1000, 1, 1, 1, 2, 3, 4),
+            isoTimestamp(1000, 1, 1) + ((1 * 60 + 2) * 60 + 3) * 1000 + 4);
+        // the two calendars differ by five days in the year 1000
+        assetTimeEquals(UnixTime.from(1000, 1, 1, 0, 0, 0, 0) - UnixTime.fromProlepticGregorian(1000, 1, 1, 0, 0, 0, 0),
+            5L * 24 * 60 * 60 * 1000);
+    }
+
+    @Test
+    public void testFromProlepticGregorianSinceCutover() throws Exception {
+        assetTimeEquals(UnixTime.fromProlepticGregorian(1582, 10, 15, 0, 0, 0, 0), isoTimestamp(1582, 10, 15));
+        assetTimeEquals(UnixTime.fromProlepticGregorian(1969, 12, 31, 23, 59, 59, 999), -1);
+        assetTimeEquals(UnixTime.fromProlepticGregorian(9999, 12, 31, 0, 0, 0, 0), isoTimestamp(9999, 12, 31));
+        assetTimeEquals(UnixTime.fromProlepticGregorian(2016, 8, 19, 0, 0, 0, 0),
+            UnixTime.from(2016, 8, 19, 0, 0, 0, 0));
+    }
+
+    @Test
+    public void testDateBeforeCutoverAsLong() throws Exception {
+        AbstractRowsEventDataDeserializer<EventData> asLong = new AbstractRowsEventDataDeserializer<EventData>(null) {
+            @Override
+            public EventData deserialize(ByteArrayInputStream inputStream) throws IOException {
+                return null;
+            }
+        };
+        asLong.setDeserializeDateAndTimeAsLong(true);
+        assetTimeEquals(asLong.asUnixTime(1000, 1, 1, 0, 0, 0, 0), isoTimestamp(1000, 1, 1));
+
+        AbstractRowsEventDataDeserializer<EventData> asDate = new AbstractRowsEventDataDeserializer<EventData>(null) {
+            @Override
+            public EventData deserialize(ByteArrayInputStream inputStream) throws IOException {
+                return null;
+            }
+        };
+        // a java.util.Date of this value reads 1000-01-01 in GMT
+        assetTimeEquals(asDate.asUnixTime(1000, 1, 1, 0, 0, 0, 0), timestamp(1000, 1, 1, 0, 0, 0, 0));
+    }
+
+    private static long isoTimestamp(int year, int month, int dayOfMonth) {
+        return java.time.LocalDate.of(year, month, dayOfMonth).toEpochDay() * 24 * 60 * 60 * 1000;
+    }
+
     private void assetTimeEquals(long actual, long expected) {
         assertEquals(actual, expected, actual + " != " + expected +
             ", discrepancy: " + (actual - expected));
