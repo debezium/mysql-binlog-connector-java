@@ -15,6 +15,8 @@ the "official" version of this.  With help from the Debezium devs.
 </dependency>
 ```
 
+Java 17 or later is required. Releases up to 0.41.5 run on Java 8 or later.
+
 Initially project was started as a fork of [open-replicator](https://code.google.com/p/open-replicator),
 but ended up as a complete rewrite. Key differences/features:
 
