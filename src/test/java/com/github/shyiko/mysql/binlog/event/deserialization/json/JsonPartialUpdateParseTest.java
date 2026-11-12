@@ -15,8 +15,8 @@ package com.github.shyiko.mysql.binlog.event.deserialization.json;
 
 import java.io.IOException;
 
-import org.junit.Assert;
-import org.junit.Test;
+import org.testng.Assert;
+import org.testng.annotations.Test;
 
 /**
  * The column value
