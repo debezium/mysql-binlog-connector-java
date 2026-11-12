@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Require Java 17 (debezium/dbz#3069). The compiler target moves from Java 8 to Java 17, the
+  target of the Debezium connectors. Releases up to 0.41.5 keep running on Java 8 or later.
 - Stop failing silently when a connection can no longer be restored (debezium/dbz#1474). Previously
   a client that lost its connection and could never get it back kept retrying forever while the
   application saw neither an event nor a callback, and had no way of telling that state apart from
