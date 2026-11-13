@@ -1021,6 +1021,55 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    public void testDisconnectRightAfterConnectStopsKeepAlive() throws Exception {
+        for (int i = 0; i < 10; i++) {
+            BinaryLogClient keepAliveClient = new BinaryLogClient(slave.hostname, slave.port, slave.username,
+                slave.password);
+            keepAliveClient.setKeepAliveInterval(50);
+            try {
+                keepAliveClient.connect(DEFAULT_TIMEOUT);
+            } finally {
+                keepAliveClient.disconnect();
+            }
+            assertFalse(keepAliveClient.isKeepAliveThreadRunning());
+            TimeUnit.MILLISECONDS.sleep(300); // several keepalive intervals
+            assertFalse(keepAliveClient.isConnected(), "the client reconnected after disconnect()");
+        }
+    }
+
+    @Test
+    public void testDisconnectFromOnConnectStopsKeepAlive() throws Exception {
+        final BinaryLogClient keepAliveClient = new BinaryLogClient(slave.hostname, slave.port, slave.username,
+            slave.password);
+        keepAliveClient.setKeepAliveInterval(50);
+        final CountDownLatch disconnected = new CountDownLatch(1);
+        keepAliveClient.registerLifecycleListener(new BinaryLogClient.AbstractLifecycleListener() {
+            @Override
+            public void onConnect(BinaryLogClient client) {
+                try {
+                    client.disconnect();
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+
+            @Override
+            public void onDisconnect(BinaryLogClient client) {
+                disconnected.countDown();
+            }
+        });
+        try {
+            keepAliveClient.connect(DEFAULT_TIMEOUT);
+            assertTrue(disconnected.await(DEFAULT_TIMEOUT, TimeUnit.MILLISECONDS));
+            assertFalse(keepAliveClient.isKeepAliveThreadRunning());
+            TimeUnit.MILLISECONDS.sleep(300); // several keepalive intervals
+            assertFalse(keepAliveClient.isConnected(), "the client reconnected after disconnect()");
+        } finally {
+            keepAliveClient.disconnect();
+        }
+    }
+
+    @Test
     public void testReconnectRaceCondition() throws Exception {
         // this test relies on SO_RCVBUF (sysctl -a | grep rcvbuf)
         // a more reliable way would be to use buffered 2-level concurrent filter input stream

@@ -761,11 +761,13 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 logger.info("Connected to " + hostname + ":" + port + " at " + position +
                     " (" + (blocking ? "sid:" + serverId + ", " : "") + "cid:" + connectionId + ")");
             }
-            for (LifecycleListener lifecycleListener : lifecycleListeners) {
-                lifecycleListener.onConnect(this);
-            }
+            // Before the listeners: connect(timeout) returns on onConnect, and a disconnect() that follows it,
+            // or that a listener calls, has to find the keepalive thread in order to stop it.
             if (keepAlive && !isKeepAliveThreadRunning()) {
                 spawnKeepAliveThread();
+            }
+            for (LifecycleListener lifecycleListener : lifecycleListeners) {
+                lifecycleListener.onConnect(this);
             }
             ensureEventDataDeserializer(EventType.ROTATE, RotateEventDataDeserializer.class);
             ensureEventDataDeserializer(EventType.QUERY, QueryEventDataDeserializer.class);
@@ -1632,6 +1634,9 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         logger.fine(() -> "Disconnecting from " + hostname + ":" + port);
         terminateKeepAliveThread();
         terminateConnect();
+        // A connect() that was in progress in another thread may have started the keepalive thread after the
+        // first call. Left alone, that thread would reconnect the client.
+        terminateKeepAliveThread();
     }
 
     private void terminateKeepAliveThread() {
