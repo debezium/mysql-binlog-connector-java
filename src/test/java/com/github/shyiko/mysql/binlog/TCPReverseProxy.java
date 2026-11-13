@@ -123,6 +123,7 @@ public class TCPReverseProxy {
                     SocketChannel channel = (SocketChannel) key.channel();
                     SocketChannel targetChannel = (SocketChannel) key.attachment();
                     try {
+                        buffer.clear();
                         int x = channel.read(buffer);
                         if (x == -1) {
                             if (logger.isLoggable(Level.FINEST)) {
@@ -132,8 +133,12 @@ public class TCPReverseProxy {
                             continue;
                         }
                         buffer.flip();
-                        targetChannel.write(buffer);
-                        buffer.rewind();
+                        // The channel does not block, so one call may write only a part
+                        while (buffer.hasRemaining()) {
+                            if (targetChannel.write(buffer) == 0) {
+                                Thread.yield();
+                            }
+                        }
                     } catch (IOException e) {
                         closeQuietly(targetChannel, channel);
                     }
