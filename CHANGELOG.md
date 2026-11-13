@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Keep a client disconnected after `disconnect()` (debezium/dbz#3092). A client that was
+  disconnected right after `connect(timeout)` returned, or from `LifecycleListener.onConnect`, could
+  be left with a keepalive thread that reconnected it one keepalive interval later. The keepalive
+  thread now starts before `onConnect` is notified.
 - Use a monotonic clock for keepalive inactivity checks, connection setup timeouts, and JMX time
   since the last event (debezium/dbz#3096). Wall-clock adjustments no longer distort these elapsed
   intervals. Source-event timestamps and replication lag retain their epoch-based meaning.
