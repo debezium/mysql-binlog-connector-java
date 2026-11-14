@@ -707,6 +707,9 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                             statement.execute("insert into bikini_bottom values('SpongeBob')");
                         }
                     });
+                    // The client reads from the replica. Once the replica has the row, the wait below is
+                    // only for the client to reconnect and read it.
+                    slaveContainer.waitForSlaveToBeCurrent(masterContainer);
                     tcpReverseProxy.resume();
                     eventListener.waitFor(WriteRowsEventData.class, 1, TimeUnit.SECONDS.toMillis(4));
                     InOrder inOrder = inOrder(lifecycleListenerMock);
@@ -1123,7 +1126,14 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
 
         BinaryLogClient client = new BinaryLogClient(master.hostname, master.port, "mysql8", "testpass");
         client.setSSLMode(SSLMode.PREFERRED);
-        client.connect(DEFAULT_TIMEOUT);
+        // Only the authentication is under test. With keepalive on, a client that is disconnected right after
+        // connect(timeout) returns can be left with a keepalive thread that reconnects it later.
+        client.setKeepAlive(false);
+        try {
+            client.connect(DEFAULT_TIMEOUT);
+        } finally {
+            client.disconnect();
+        }
     }
 
     @Test
@@ -1133,12 +1143,17 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
 
         BinaryLogClient client = new BinaryLogClient(master.hostname, master.port, "mysql8", "testpass");
         client.setSSLMode(SSLMode.PREFERRED);
-        client.connect(DEFAULT_TIMEOUT);
+        client.setKeepAlive(false); // see testMysql8Auth
+        try {
+            client.connect(DEFAULT_TIMEOUT);
 
-        client.disconnect();
+            client.disconnect();
 
-        // this call should hit the sha2 cache
-        client.connect(DEFAULT_TIMEOUT);
+            // this call should hit the sha2 cache
+            client.connect(DEFAULT_TIMEOUT);
+        } finally {
+            client.disconnect();
+        }
     }
 
 
@@ -1157,9 +1172,13 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
         setupMysql8Login(cx);
         BinaryLogClient c = new BinaryLogClient(cx.hostname, cx.port, "mysql8", "testpass");
         c.setSSLMode(SSLMode.PREFERRED);
-        c.connect(DEFAULT_TIMEOUT);
-
-        server.stop();
+        c.setKeepAlive(false); // see testMysql8Auth
+        try {
+            c.connect(DEFAULT_TIMEOUT);
+        } finally {
+            c.disconnect();
+            server.stop();
+        }
     }
 
     @Test
@@ -1168,7 +1187,12 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
             throw new SkipException("skipping mysql8 auth test");
 
         BinaryLogClient client = new BinaryLogClient(master.hostname, master.port, "mysql8", "testpass");
-        client.connect(DEFAULT_TIMEOUT);
+        client.setKeepAlive(false); // see testMysql8Auth
+        try {
+            client.connect(DEFAULT_TIMEOUT);
+        } finally {
+            client.disconnect();
+        }
     }
 
     @Test
@@ -1538,7 +1562,8 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
             if (master != null) {
                 master.execute(new Callback<Statement>() {
                     public void execute(Statement statement) throws SQLException {
-                        statement.execute("drop database mbcj_test");
+                        // setUp may have failed before it created the database
+                        statement.execute("drop database if exists mbcj_test");
                     }
                 });
                 master.close();

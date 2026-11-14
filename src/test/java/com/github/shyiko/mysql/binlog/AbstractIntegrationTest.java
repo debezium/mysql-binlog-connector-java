@@ -9,8 +9,15 @@ import org.testng.annotations.BeforeClass;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.TimeZone;
+import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractIntegrationTest {
+
+    /**
+     * For the steps that prepare a test class. The servers have just started then, and a class whose preparation
+     * fails loses all its tests, so these steps wait longer than a test does for an event.
+     */
+    protected static final long SETUP_TIMEOUT = TimeUnit.SECONDS.toMillis(30);
     protected MySQLConnection master;
     protected MySQLConnection slave;
     protected BinaryLogClient client;
@@ -70,7 +77,7 @@ public abstract class AbstractIntegrationTest {
         client.registerEventListener(new TraceEventListener());
         client.registerEventListener(eventListener = new CountDownEventListener());
         client.registerLifecycleListener(new TraceLifecycleListener());
-        client.connect(BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
+        client.connect(SETUP_TIMEOUT);
         master.execute(new BinaryLogClientIntegrationTest.Callback<Statement>() {
             @Override
             public void execute(Statement statement) throws SQLException {
@@ -82,13 +89,13 @@ public abstract class AbstractIntegrationTest {
         // Wait for slave to replicate the commands from master
         slaveContainer.waitForSlaveToBeCurrent(masterContainer);
 
-        eventListener.waitFor(EventType.QUERY, 2, BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
+        eventListener.waitFor(EventType.QUERY, 2, SETUP_TIMEOUT);
 
         if ( mysqlVersion.atLeast(8, 0) ) {
             setupMysql8Login(master);
             // Wait for slave to replicate the MySQL 8 login setup
             slaveContainer.waitForSlaveToBeCurrent(masterContainer);
-            eventListener.waitFor(EventType.QUERY, 2, BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT);
+            eventListener.waitFor(EventType.QUERY, 2, SETUP_TIMEOUT);
         }
     }
 
