@@ -694,6 +694,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             throw new IllegalStateException("BinaryLogClient is already connected");
         }
         boolean notifyWhenDisconnected = false;
+        ThreadPoolExecutor preparedKeepAliveExecutor = null;
+        Throwable startupFailure = null;
         try {
             Callable<Void> cancelDisconnect = null;
             try {
@@ -761,25 +763,71 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 logger.info("Connected to " + hostname + ":" + port + " at " + position +
                     " (" + (blocking ? "sid:" + serverId + ", " : "") + "cid:" + connectionId + ")");
             }
-            for (LifecycleListener lifecycleListener : lifecycleListeners) {
-                lifecycleListener.onConnect(this);
-            }
-            if (keepAlive && !isKeepAliveThreadRunning()) {
-                spawnKeepAliveThread();
-            }
-            ensureEventDataDeserializer(EventType.ROTATE, RotateEventDataDeserializer.class);
-            ensureEventDataDeserializer(EventType.QUERY, QueryEventDataDeserializer.class);
-            synchronized (gtidSetAccessLock) {
-                if (this.gtidEnabled) {
-                    ensureGtidEventDataDeserializer();
+            try {
+                // Publish a stoppable worker before onConnect, but do not let it reconnect during startup.
+                if (keepAlive && !isKeepAliveThreadRunning()) {
+                    preparedKeepAliveExecutor = prepareKeepAliveThread();
                 }
+                for (LifecycleListener lifecycleListener : lifecycleListeners) {
+                    lifecycleListener.onConnect(this);
+                }
+                ensureEventDataDeserializer(EventType.ROTATE, RotateEventDataDeserializer.class);
+                ensureEventDataDeserializer(EventType.QUERY, QueryEventDataDeserializer.class);
+                synchronized (gtidSetAccessLock) {
+                    if (this.gtidEnabled) {
+                        ensureGtidEventDataDeserializer();
+                    }
+                }
+                // A listener may enable or disable keepalive, or disconnect the client.
+                if (connected && keepAlive) {
+                    if (preparedKeepAliveExecutor == null && !isKeepAliveThreadRunning()) {
+                        preparedKeepAliveExecutor = prepareKeepAliveThread();
+                    }
+                    if (preparedKeepAliveExecutor != null) {
+                        startKeepAliveThread(preparedKeepAliveExecutor);
+                    }
+                } else if (preparedKeepAliveExecutor != null) {
+                    shutdownKeepAliveExecutor(preparedKeepAliveExecutor);
+                }
+            } catch (RuntimeException | Error e) {
+                startupFailure = e;
+                try {
+                    disconnectChannel();
+                } catch (IOException | RuntimeException | Error cleanupFailure) {
+                    if (cleanupFailure != e) {
+                        e.addSuppressed(cleanupFailure);
+                    }
+                }
+                // An existing worker owns reconnect retries. Only cancel a worker created by this startup.
+                if (preparedKeepAliveExecutor != null) {
+                    try {
+                        shutdownKeepAliveExecutor(preparedKeepAliveExecutor);
+                    } catch (RuntimeException | Error cleanupFailure) {
+                        if (cleanupFailure != e) {
+                            e.addSuppressed(cleanupFailure);
+                        }
+                    }
+                }
+                throw e;
             }
             listenForEventPackets();
         } finally {
             connectLock.unlock();
+            if (preparedKeepAliveExecutor != null && preparedKeepAliveExecutor.isShutdown()) {
+                awaitKeepAliveThreadTermination(preparedKeepAliveExecutor);
+            }
             if (notifyWhenDisconnected) {
                 for (LifecycleListener lifecycleListener : lifecycleListeners) {
-                    lifecycleListener.onDisconnect(this);
+                    try {
+                        lifecycleListener.onDisconnect(this);
+                    } catch (RuntimeException | Error e) {
+                        if (startupFailure == null) {
+                            throw e;
+                        }
+                        if (e != startupFailure) {
+                            startupFailure.addSuppressed(e);
+                        }
+                    }
                 }
             }
         }
@@ -1016,22 +1064,56 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         }
     }
 
-    private void spawnKeepAliveThread() {
+    private ThreadPoolExecutor prepareKeepAliveThread() {
         // Do not use Executors.newSingleThreadExecutor() here. On JDK 21+ it wraps the pool in an
         // AutoShutdownDelegatedExecutorService that registers a Cleaner whose action holds the pool and,
         // through the ThreadFactory below, this client. The Cleaner list is a GC root, so a disconnected
         // client could never be garbage collected (channel and TLS buffers included).
-        final ExecutorService threadExecutor = new ThreadPoolExecutor(1, 1, 0L,
+        final ThreadPoolExecutor threadExecutor = new ThreadPoolExecutor(1, 1, 0L,
             TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
             runnable -> {
                 Thread thread = newNamedThread(runnable, "blc-keepalive-" + hostname + ":" + port);
                 keepAliveThread = thread;
                 return thread;
             });
+        keepAliveThreadExecutorLock.lock();
+        final Thread previousKeepAliveThread = keepAliveThread;
         try {
-            keepAliveThreadExecutorLock.lock();
-            threadExecutor.submit(() -> runKeepAlive(threadExecutor));
+            if (!threadExecutor.prestartCoreThread()) {
+                throw new IllegalStateException("Unable to start keepalive thread");
+            }
             keepAliveThreadExecutor = threadExecutor;
+        } catch (RuntimeException | Error failure) {
+            keepAliveThread = previousKeepAliveThread;
+            try {
+                threadExecutor.shutdownNow();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != failure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+            }
+            throw failure;
+        } finally {
+            keepAliveThreadExecutorLock.unlock();
+        }
+        return threadExecutor;
+    }
+
+    private void startKeepAliveThread(ThreadPoolExecutor executor) {
+        keepAliveThreadExecutorLock.lock();
+        try {
+            if (!executor.isShutdown()) {
+                executor.submit(() -> runKeepAlive(executor));
+            }
+        } finally {
+            keepAliveThreadExecutorLock.unlock();
+        }
+    }
+
+    private void shutdownKeepAliveExecutor(ExecutorService executor) {
+        keepAliveThreadExecutorLock.lock();
+        try {
+            executor.shutdownNow();
         } finally {
             keepAliveThreadExecutorLock.unlock();
         }
@@ -1632,26 +1714,34 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         logger.fine(() -> "Disconnecting from " + hostname + ":" + port);
         terminateKeepAliveThread();
         terminateConnect();
+        // A connect() that was in progress in another thread may have started the keepalive thread after the
+        // first call. Left alone, that thread would reconnect the client.
+        terminateKeepAliveThread();
     }
 
     private void terminateKeepAliveThread() {
+        ExecutorService executor;
         try {
             keepAliveThreadExecutorLock.lock();
-            ExecutorService keepAliveThreadExecutor = this.keepAliveThreadExecutor;
-            if ( keepAliveThreadExecutor == null ) {
+            executor = keepAliveThreadExecutor;
+            if (executor == null) {
                 return;
             }
-            keepAliveThreadExecutor.shutdownNow();
+            executor.shutdownNow();
         } finally {
             keepAliveThreadExecutorLock.unlock();
         }
+        awaitKeepAliveThreadTermination(executor);
+    }
+
+    private void awaitKeepAliveThreadTermination(ExecutorService executor) {
         if (Thread.currentThread() == keepAliveThread) {
             // disconnect() was called from the keepalive thread itself, typically by a LifecycleListener
             // reacting to a failure reported from there; awaiting our own termination would deadlock.
             logger.fine("disconnect() called from the keepalive thread, not awaiting its termination");
             return;
         }
-        while (!awaitTerminationInterruptibly(keepAliveThreadExecutor,
+        while (!awaitTerminationInterruptibly(executor,
             Long.MAX_VALUE, TimeUnit.NANOSECONDS)) {
             // ignore
         }
