@@ -20,6 +20,7 @@ import com.github.shyiko.mysql.binlog.event.Event;
 import com.github.shyiko.mysql.binlog.event.EventHeader;
 import com.github.shyiko.mysql.binlog.event.EventType;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -31,6 +32,7 @@ public class BinaryLogClientStatistics implements BinaryLogClientStatisticsMXBea
 
     private AtomicReference<EventHeader> lastEventHeader = new AtomicReference<EventHeader>();
     private AtomicLong timestampOfLastEvent = new AtomicLong();
+    private AtomicLong nanoTimeOfLastEvent = new AtomicLong();
     private AtomicLong totalNumberOfEventsSeen = new AtomicLong();
     private AtomicLong totalBytesReceived = new AtomicLong();
     private AtomicLong numberOfSkippedEvents = new AtomicLong();
@@ -53,8 +55,11 @@ public class BinaryLogClientStatistics implements BinaryLogClientStatisticsMXBea
 
     @Override
     public long getSecondsSinceLastEvent() {
-        long timestamp = timestampOfLastEvent.get();
-        return timestamp == 0 ? 0 : (getCurrentTimeMillis() - timestamp) / 1000;
+        if (timestampOfLastEvent.get() == 0) {
+            return 0;
+        }
+        long nanoTime = nanoTimeOfLastEvent.get();
+        return TimeUnit.NANOSECONDS.toSeconds(getCurrentTimeNanos() - nanoTime);
     }
 
     @Override
@@ -95,6 +100,7 @@ public class BinaryLogClientStatistics implements BinaryLogClientStatisticsMXBea
     @Override
     public void reset() {
         lastEventHeader.set(null);
+        // This marks the reset state; retain the monotonic tick for concurrent readers.
         timestampOfLastEvent.set(0);
         totalNumberOfEventsSeen.set(0);
         totalBytesReceived.set(0);
@@ -106,6 +112,7 @@ public class BinaryLogClientStatistics implements BinaryLogClientStatisticsMXBea
     public void onEvent(Event event) {
         EventHeader header = event.getHeader();
         lastEventHeader.set(header);
+        nanoTimeOfLastEvent.set(getCurrentTimeNanos());
         timestampOfLastEvent.set(getCurrentTimeMillis());
         totalNumberOfEventsSeen.getAndIncrement();
         totalBytesReceived.getAndAdd(header.getHeaderLength() + header.getDataLength());
@@ -115,6 +122,7 @@ public class BinaryLogClientStatistics implements BinaryLogClientStatisticsMXBea
     public void onEventDeserializationFailure(BinaryLogClient client, Exception ex) {
         numberOfSkippedEvents.getAndIncrement();
         lastEventHeader.set(null);
+        nanoTimeOfLastEvent.set(getCurrentTimeNanos());
         timestampOfLastEvent.set(getCurrentTimeMillis());
         totalNumberOfEventsSeen.getAndIncrement();
     }
@@ -134,6 +142,10 @@ public class BinaryLogClientStatistics implements BinaryLogClientStatisticsMXBea
 
     protected long getCurrentTimeMillis() {
         return System.currentTimeMillis();
+    }
+
+    protected long getCurrentTimeNanos() {
+        return System.nanoTime();
     }
 
 }

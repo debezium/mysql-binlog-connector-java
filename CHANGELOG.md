@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Use a monotonic clock for keepalive inactivity checks, connection setup timeouts, and JMX time
+  since the last event (debezium/dbz#3096). Wall-clock adjustments no longer distort these elapsed
+  intervals. Source-event timestamps and replication lag retain their epoch-based meaning.
 - Convert between bytes and strings as UTF-8 instead of the default charset of the JVM
   (debezium/dbz#3079). Up to Java 17 that charset follows the locale, so in a container without a
   UTF-8 locale, database, table and column names, SQL statements and JSON keys with non-ASCII

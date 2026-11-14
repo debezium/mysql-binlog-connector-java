@@ -771,8 +771,9 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
                     firstRowsEventInterrupted.countDown();
                     // Keep the listener blocked until keepalive disconnects to reproduce DBZ-2359. This lets the
                     // connection expire before the current rows event advances the binlog position.
-                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                    while (replayingClient.isConnected() && System.nanoTime() < deadline) {
+                    long startNanos = System.nanoTime();
+                    while (replayingClient.isConnected() &&
+                        System.nanoTime() - startNanos < TimeUnit.SECONDS.toNanos(5)) {
                         Thread.yield();
                     }
                     return;
