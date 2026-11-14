@@ -55,6 +55,7 @@ import static org.testng.Assert.assertTrue;
  */
 public class JsonBinaryValueIntegrationTest {
 
+    private static final long SETUP_TIMEOUT = TimeUnit.SECONDS.toMillis(30);
     private static final long DEFAULT_TIMEOUT = TimeUnit.SECONDS.toMillis(6);
 
     private final Logger logger = Logger.getLogger(getClass().getSimpleName());
@@ -88,7 +89,7 @@ public class JsonBinaryValueIntegrationTest {
         client.registerEventListener(new TraceEventListener());
         client.registerEventListener(eventListener = new CountDownEventListener());
         client.registerLifecycleListener(new TraceLifecycleListener());
-        client.connect(DEFAULT_TIMEOUT);
+        client.connect(SETUP_TIMEOUT);
         master.execute(new BinaryLogClientIntegrationTest.Callback<Statement>() {
             @Override
             public void execute(Statement statement) throws SQLException {
@@ -109,7 +110,7 @@ public class JsonBinaryValueIntegrationTest {
             System.err.println("skipping JSON tests (pre 5.7)");
             throw new org.testng.SkipException("JSON data type is not supported by current version of MySQL");
         }
-        eventListener.waitForAtLeast(EventType.QUERY, 3, DEFAULT_TIMEOUT);
+        eventListener.waitForAtLeast(EventType.QUERY, 3, SETUP_TIMEOUT);
         eventListener.reset();
     }
 
