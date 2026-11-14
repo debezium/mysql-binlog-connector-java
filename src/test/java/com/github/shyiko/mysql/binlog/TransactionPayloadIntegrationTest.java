@@ -11,6 +11,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.testng.Assert.*;
 
@@ -94,7 +95,7 @@ public class TransactionPayloadIntegrationTest extends AbstractIntegrationTest {
             System.out.println("Starting very large transaction test...");
             System.out.println("Chunk size: " + chunk.length() + " bytes");
 
-            long startTime = System.currentTimeMillis();
+            long startNanos = System.nanoTime();
 
             // Insert rows with large data
             // With 3 columns of 1MB each per row, and good compression:
@@ -124,8 +125,8 @@ public class TransactionPayloadIntegrationTest extends AbstractIntegrationTest {
                 }
             });
 
-            long insertTime = System.currentTimeMillis() - startTime;
-            System.out.println("Transaction committed in " + (insertTime / 1000) + " seconds");
+            long insertSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startNanos);
+            System.out.println("Transaction committed in " + insertSeconds + " seconds");
 
             // Wait for transaction payload event (give it more time for large transactions)
             long largeTimeout = BinaryLogClientIntegrationTest.DEFAULT_TIMEOUT * 1000; // 30 seconds
@@ -167,7 +168,7 @@ public class TransactionPayloadIntegrationTest extends AbstractIntegrationTest {
             }
             assertTrue(writeRowsCount > 0, "Should have WriteRowsEventData in the payload");
 
-            long totalTime = System.currentTimeMillis() - startTime;
+            long totalMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
 
             System.out.println("\n=== Very Large Transaction Test Results ===");
             System.out.printf("Rows inserted: %d%n", numRows);
@@ -181,7 +182,7 @@ public class TransactionPayloadIntegrationTest extends AbstractIntegrationTest {
             System.out.printf("Compression ratio: %.2fx%n", compressionRatio);
             System.out.printf("Events decompressed: %d%n", uncompressedEvents.size());
             System.out.printf("Write events: %d%n", writeRowsCount);
-            System.out.printf("Total time: %.1f seconds%n", totalTime / 1000.0);
+            System.out.printf("Total time: %.1f seconds%n", totalMillis / 1000.0);
             System.out.println("===========================================\n");
 
         } finally {

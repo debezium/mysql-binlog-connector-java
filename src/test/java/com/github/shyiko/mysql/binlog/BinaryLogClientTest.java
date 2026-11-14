@@ -22,6 +22,7 @@ import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
 import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -30,10 +31,12 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,6 +45,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import com.github.shyiko.mysql.binlog.event.Event;
@@ -133,6 +137,64 @@ public class BinaryLogClientTest {
             binaryLogClient.connect();
         } catch (IOException e) {
             binaryLogClientDisconnected.countDown();
+        }
+    }
+
+    @DataProvider(name = "connectionSetupTimeouts")
+    public Object[][] connectionSetupTimeouts() {
+        return new Object[][] {
+            { -TimeUnit.SECONDS.toNanos(1), TimeUnit.MILLISECONDS.toNanos(250) + 999_999L, 1000L, 750L },
+            { 0L, TimeUnit.MILLISECONDS.toNanos(1000), 1000L, 0L },
+            { Long.MAX_VALUE - TimeUnit.MILLISECONDS.toNanos(500),
+                TimeUnit.MILLISECONDS.toNanos(1250), 1000L, -250L },
+            { 0L, TimeUnit.MILLISECONDS.toNanos(50), 0L, null }
+        };
+    }
+
+    @Test(dataProvider = "connectionSetupTimeouts")
+    public void testConnectionSetupTimeoutUsesElapsedTime(final long initialTimeNanos,
+            final long elapsedNanos, final long timeoutMillis, final Long remainingTimeoutMillis) throws IOException {
+        final List<Long> scheduledTimeouts = new ArrayList<>();
+        final var client = new TestClockBinaryLogClient(initialTimeNanos) {
+            @Override
+            Callable<Void> scheduleDisconnectIn(final long timeout) {
+                scheduledTimeouts.add(timeout);
+                return () -> null;
+            }
+        };
+        client.setConnectTimeout(timeoutMillis);
+        client.setKeepAlive(false);
+        try (final var socket = new Socket() {
+            @Override
+            public void connect(final SocketAddress endpoint, final int timeout) {
+                assertEquals(timeout, (int) timeoutMillis, "socket timeout must remain in milliseconds");
+                client.advanceTimeNanos(elapsedNanos);
+            }
+
+            @Override
+            public InputStream getInputStream() {
+                return new java.io.ByteArrayInputStream(new byte[0]);
+            }
+
+            @Override
+            public OutputStream getOutputStream() {
+                return new ByteArrayOutputStream();
+            }
+        }) {
+            client.setSocketFactory(() -> socket);
+            try {
+                client.connect();
+                fail("the empty greeting must fail the connection");
+            } catch (IOException expected) {
+                assertTrue(expected.getCause() instanceof EOFException);
+            }
+            assertTrue(socket.isClosed(), "the failed connection must close its socket");
+        }
+        if (remainingTimeoutMillis == null) {
+            assertTrue(scheduledTimeouts.isEmpty(), "a zero connect timeout must not schedule a disconnect");
+        } else {
+            assertEquals(scheduledTimeouts, Collections.singletonList(remainingTimeoutMillis),
+                "opening the channel must consume the connection setup budget");
         }
     }
 
@@ -444,15 +506,14 @@ public class BinaryLogClientTest {
      * fails with an IOException, emulating a broken connection.
      */
     private static PacketChannel stubChannel(final boolean writable) throws IOException {
+        return stubChannel(new byte[0], writable);
+    }
+
+    private static PacketChannel stubChannel(final byte[] input, final boolean writable) throws IOException {
         return new PacketChannel(new Socket() {
             @Override
             public InputStream getInputStream() throws IOException {
-                return new InputStream() {
-                    @Override
-                    public int read() throws IOException {
-                        return -1;
-                    }
-                };
+                return new java.io.ByteArrayInputStream(input);
             }
 
             @Override
@@ -469,9 +530,41 @@ public class BinaryLogClientTest {
         });
     }
 
+    private static class TestClockBinaryLogClient extends BinaryLogClient {
+        private long currentTimeNanos;
+
+        private TestClockBinaryLogClient(final long currentTimeNanos) {
+            super("localhost", 3306, "root", "mysql");
+            this.currentTimeNanos = currentTimeNanos;
+        }
+
+        void advanceTimeNanos(final long elapsedNanos) {
+            currentTimeNanos += elapsedNanos;
+        }
+
+        @Override
+        long getCurrentTimeNanos() {
+            return currentTimeNanos;
+        }
+    }
+
+    private static byte[] heartbeatPacket() throws IOException {
+        final var packet = new com.github.shyiko.mysql.binlog.io.ByteArrayOutputStream();
+        packet.writeInteger(20, 3); // packet length: marker and 19-byte event header
+        packet.writeInteger(0, 1); // sequence
+        packet.writeInteger(0, 1); // event marker
+        packet.writeLong(0, 4); // timestamp
+        packet.writeInteger(27, 1); // HEARTBEAT_LOG_EVENT
+        packet.writeLong(1, 4); // server id
+        packet.writeLong(19, 4); // event length
+        packet.writeLong(0, 4); // next position
+        packet.writeInteger(0, 2); // flags
+        return packet.toByteArray();
+    }
+
     /**
      * With heartbeats enabled, the keepalive thread must not declare a connection lost before the
-     * first event of that connection has arrived, no matter how stale eventLastSeen is: after
+     * first event of that connection has arrived, no matter how old its receive timestamp is: after
      * COM_BINLOG_DUMP(_GTID) the server may take longer than keepAliveInterval to locate the
      * requested position (e.g. GTID auto-positioning over a large number of binlog files), during
      * which it sends neither events nor heartbeats. Tearing the connection down then restarts the
@@ -483,7 +576,7 @@ public class BinaryLogClientTest {
         BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
         client.setHeartbeatInterval(80);
         client.setKeepAliveInterval(100);
-        // eventSeenSinceConnect defaults to false and eventLastSeen to 0, i.e. arbitrarily stale
+        // No event has been received, so the last-event timestamp must not be consulted.
         client.channel = stubChannel(true);
         assertFalse(client.isConnectionLost(),
             "a connection awaiting its first event must not be considered lost while its socket is writable");
@@ -503,25 +596,44 @@ public class BinaryLogClientTest {
             "a broken socket must be detected even before the first event is received");
     }
 
+    @DataProvider(name = "keepAliveClockOrigins")
+    public Object[][] keepAliveClockOrigins() {
+        return new Object[][] {
+            { -TimeUnit.SECONDS.toNanos(1) },
+            { 0L },
+            { Long.MAX_VALUE - TimeUnit.MILLISECONDS.toNanos(50) }
+        };
+    }
+
     /**
      * Once the first event of the current connection has been seen, the original behavior applies:
      * with heartbeats enabled the connection is considered lost when no event has been received for
      * more than keepAliveInterval.
      */
-    @Test
-    public void testKeepAliveReconnectsWhenEstablishedStreamGoesSilent() throws IOException {
-        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
+    @Test(dataProvider = "keepAliveClockOrigins")
+    public void testKeepAliveReconnectsWhenEstablishedStreamGoesSilent(final long initialTimeNanos) throws IOException {
+        final var client = new TestClockBinaryLogClient(initialTimeNanos);
         client.setHeartbeatInterval(80);
-        client.channel = stubChannel(true);
-        client.eventSeenSinceConnect = true;
-        // eventLastSeen is 0, so the stream is stale for any realistic interval...
-        client.setKeepAliveInterval(1);
-        assertTrue(client.isConnectionLost(),
-            "an established stream that went silent for longer than keepAliveInterval must reconnect");
-        // ...but not when the interval exceeds the time elapsed since epoch
-        client.setKeepAliveInterval(Long.MAX_VALUE);
-        assertFalse(client.isConnectionLost(),
-            "an established stream within keepAliveInterval must not reconnect");
+        client.setKeepAliveInterval(100);
+        client.channel = stubChannel(heartbeatPacket(), true);
+        client.connected = true;
+        final var eventsSeen = new AtomicInteger();
+        client.registerEventListener(event -> {
+            eventsSeen.incrementAndGet();
+            assertEquals(event.getHeader().getEventType(), EventType.HEARTBEAT);
+            assertTrue(client.eventSeenSinceConnect, "the event must publish its receive time before callbacks");
+            assertFalse(client.isConnectionLost(), "a just-received event must keep the connection healthy");
+            client.advanceTimeNanos(TimeUnit.MILLISECONDS.toNanos(99));
+            assertFalse(client.isConnectionLost(), "an interval that has not elapsed must remain healthy");
+            client.advanceTimeNanos(TimeUnit.MILLISECONDS.toNanos(1));
+            assertFalse(client.isConnectionLost(), "the comparison must remain strict at the interval boundary");
+            client.advanceTimeNanos(TimeUnit.MILLISECONDS.toNanos(1));
+            assertTrue(client.isConnectionLost(), "silence beyond the interval must trigger a reconnect");
+            client.setKeepAliveInterval(Long.MAX_VALUE);
+            assertFalse(client.isConnectionLost(), "large millisecond intervals must not overflow");
+        });
+        client.listenForEventPackets();
+        assertEquals(eventsSeen.get(), 1, "the reader must process the heartbeat fixture");
     }
 
     /**
@@ -532,12 +644,12 @@ public class BinaryLogClientTest {
     @Test
     public void testKeepAlivePingsWhenHeartbeatsDisabled() throws IOException {
         BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql");
-        // heartbeatInterval stays 0; eventLastSeen is 0, i.e. stale for any interval
+        // With heartbeats disabled, event staleness must not affect the ping decision.
         client.setKeepAliveInterval(1);
         client.eventSeenSinceConnect = true;
         client.channel = stubChannel(true);
         assertFalse(client.isConnectionLost(),
-            "with heartbeats disabled a writable socket must not be considered lost, however stale eventLastSeen is");
+            "with heartbeats disabled a writable socket must not be considered lost, regardless of event staleness");
         client.channel = stubChannel(false);
         assertTrue(client.isConnectionLost(),
             "with heartbeats disabled a broken socket must be considered lost");

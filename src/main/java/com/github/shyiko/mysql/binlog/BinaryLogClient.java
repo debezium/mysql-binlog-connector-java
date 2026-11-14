@@ -176,7 +176,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private int keepAliveMaxReconnectAttempts;
 
     private long heartbeatInterval;
-    private volatile long eventLastSeen;
+    private volatile long eventLastSeenNanos;
     // visible for testing
     volatile boolean eventSeenSinceConnect;
 
@@ -698,11 +698,11 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             Callable<Void> cancelDisconnect = null;
             try {
                 try {
-                    long start = System.currentTimeMillis();
+                    final long startNanos = getCurrentTimeNanos();
                     channel = openChannel();
                     if (connectTimeout > 0 && !isKeepAliveThreadRunning()) {
                         cancelDisconnect = scheduleDisconnectIn(connectTimeout -
-                            (System.currentTimeMillis() - start));
+                            TimeUnit.NANOSECONDS.toMillis(getCurrentTimeNanos() - startNanos));
                     }
                     if (channel.getInputStream().peek() == -1) {
                         throw new EOFException();
@@ -816,7 +816,8 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         return new PacketChannel(socket);
     }
 
-    private Callable<Void> scheduleDisconnectIn(final long timeout) {
+    // visible for testing
+    Callable<Void> scheduleDisconnectIn(final long timeout) {
         final CountDownLatch connectLatch = new CountDownLatch(1);
         final Thread thread = newNamedThread(() -> {
             try {
@@ -990,6 +991,11 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         ensureEventDataDeserializer(EventType.MARIADB_GTID_LIST, MariadbGtidListEventDataDeserializer.class);
     }
 
+    // visible for testing
+    long getCurrentTimeNanos() {
+        return System.nanoTime();
+    }
+
     /**
      * Decides whether the keepalive thread should consider the connection lost and force a reconnect.
      * <p>
@@ -1006,7 +1012,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     // visible for testing
     boolean isConnectionLost() {
         if (heartbeatInterval > 0 && eventSeenSinceConnect) {
-            return System.currentTimeMillis() - eventLastSeen > keepAliveInterval;
+            return TimeUnit.NANOSECONDS.toMillis(getCurrentTimeNanos() - eventLastSeenNanos) > keepAliveInterval;
         }
         try {
             channel.write(new PingCommand());
@@ -1280,7 +1286,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                     continue;
                 }
                 if (isConnected()) {
-                    eventLastSeen = System.currentTimeMillis();
+                    eventLastSeenNanos = getCurrentTimeNanos();
                     eventSeenSinceConnect = true;
                     updateNonGtidTransactionStateBeforeEvent(event);
                     updateGtidSet(event);
