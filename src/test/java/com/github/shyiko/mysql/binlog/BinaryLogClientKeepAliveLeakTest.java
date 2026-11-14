@@ -5,8 +5,13 @@ import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import org.testng.SkipException;
 import org.testng.annotations.Test;
@@ -53,7 +58,14 @@ public class BinaryLogClientKeepAliveLeakTest {
 
     private static WeakReference<BinaryLogClient> startAndDisconnectClient(boolean customThreadFactory)
         throws Exception {
-        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "");
+        final CountDownLatch keepAliveStarted = new CountDownLatch(1);
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "") {
+            @Override
+            void runKeepAlive(ExecutorService executor) {
+                keepAliveStarted.countDown();
+                super.runKeepAlive(executor);
+            }
+        };
         if (customThreadFactory) {
             client.setThreadFactory(new ThreadFactory() {
                 @Override
@@ -65,11 +77,30 @@ public class BinaryLogClientKeepAliveLeakTest {
             });
         }
         client.setKeepAliveInterval(60000L);
-        Method spawn = BinaryLogClient.class.getDeclaredMethod("spawnKeepAliveThread");
-        spawn.setAccessible(true);
-        spawn.invoke(client);
-        assertTrue(client.isKeepAliveThreadRunning(), "keepalive thread should be running");
-        client.disconnect();
+        Method prepare = BinaryLogClient.class.getDeclaredMethod("prepareKeepAliveThread");
+        prepare.setAccessible(true);
+        Method start = BinaryLogClient.class.getDeclaredMethod("startKeepAliveThread", ThreadPoolExecutor.class);
+        start.setAccessible(true);
+        Thread keepAliveThread = null;
+        try {
+            ThreadPoolExecutor executor = (ThreadPoolExecutor) prepare.invoke(client);
+            Field threadField = BinaryLogClient.class.getDeclaredField("keepAliveThread");
+            threadField.setAccessible(true);
+            keepAliveThread = (Thread) threadField.get(client);
+            start.invoke(client, executor);
+            assertTrue(keepAliveStarted.await(10, TimeUnit.SECONDS), "the keepalive monitoring task must start");
+            assertTrue(client.isKeepAliveThreadRunning(), "keepalive thread should be running");
+        } finally {
+            try {
+                client.disconnect();
+            } finally {
+                if (keepAliveThread != null) {
+                    // Executor termination can precede the actual thread's exit and release of its stack.
+                    keepAliveThread.join(10000);
+                    assertFalse(keepAliveThread.isAlive(), "the keepalive thread must exit before checking reachability");
+                }
+            }
+        }
         assertFalse(client.isKeepAliveThreadRunning(), "keepalive thread should be stopped after disconnect()");
         return new WeakReference<BinaryLogClient>(client);
     }

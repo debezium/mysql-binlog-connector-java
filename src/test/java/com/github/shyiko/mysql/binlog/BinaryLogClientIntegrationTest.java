@@ -69,6 +69,7 @@ import java.util.Map;
 import java.util.ResourceBundle;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -1020,28 +1021,39 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
         }
     }
 
-    @Test
+    @Test(timeOut = 30000)
     public void testDisconnectRightAfterConnectStopsKeepAlive() throws Exception {
-        for (int i = 0; i < 10; i++) {
-            BinaryLogClient keepAliveClient = new BinaryLogClient(slave.hostname, slave.port, slave.username,
-                slave.password);
-            keepAliveClient.setKeepAliveInterval(50);
-            try {
-                keepAliveClient.connect(DEFAULT_TIMEOUT);
-            } finally {
-                keepAliveClient.disconnect();
-            }
+        final BinaryLogClient keepAliveClient = new BinaryLogClient(slave.hostname, slave.port, slave.username,
+            slave.password);
+        final List<Thread> threads = new CopyOnWriteArrayList<>();
+        keepAliveClient.setThreadFactory(runnable -> {
+            final Thread thread = new Thread(runnable);
+            thread.setDaemon(true);
+            threads.add(thread);
+            return thread;
+        });
+        try {
+            keepAliveClient.connect(DEFAULT_TIMEOUT);
+            keepAliveClient.disconnect();
+            assertClientThreadsStopped(threads);
             assertFalse(keepAliveClient.isKeepAliveThreadRunning());
-            TimeUnit.MILLISECONDS.sleep(300); // several keepalive intervals
             assertFalse(keepAliveClient.isConnected(), "the client reconnected after disconnect()");
+        } finally {
+            keepAliveClient.disconnect();
         }
     }
 
-    @Test
+    @Test(timeOut = 30000)
     public void testDisconnectFromOnConnectStopsKeepAlive() throws Exception {
         final BinaryLogClient keepAliveClient = new BinaryLogClient(slave.hostname, slave.port, slave.username,
             slave.password);
-        keepAliveClient.setKeepAliveInterval(50);
+        final List<Thread> threads = new CopyOnWriteArrayList<>();
+        keepAliveClient.setThreadFactory(runnable -> {
+            final Thread thread = new Thread(runnable);
+            thread.setDaemon(true);
+            threads.add(thread);
+            return thread;
+        });
         final CountDownLatch disconnected = new CountDownLatch(1);
         keepAliveClient.registerLifecycleListener(new BinaryLogClient.AbstractLifecycleListener() {
             @Override
@@ -1061,11 +1073,25 @@ public class BinaryLogClientIntegrationTest extends AbstractIntegrationTest {
         try {
             keepAliveClient.connect(DEFAULT_TIMEOUT);
             assertTrue(disconnected.await(DEFAULT_TIMEOUT, TimeUnit.MILLISECONDS));
+            assertClientThreadsStopped(threads);
             assertFalse(keepAliveClient.isKeepAliveThreadRunning());
-            TimeUnit.MILLISECONDS.sleep(300); // several keepalive intervals
             assertFalse(keepAliveClient.isConnected(), "the client reconnected after disconnect()");
         } finally {
             keepAliveClient.disconnect();
+        }
+    }
+
+    private static void assertClientThreadsStopped(final List<Thread> threads) throws InterruptedException {
+        final long startedNanos = System.nanoTime();
+        final long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(DEFAULT_TIMEOUT);
+        // Joining creators before their children also covers threads registered while a join is in progress.
+        for (int index = 0; index < threads.size(); index++) {
+            final Thread thread = threads.get(index);
+            final long remainingNanos = timeoutNanos - (System.nanoTime() - startedNanos);
+            if (remainingNanos > 0) {
+                TimeUnit.NANOSECONDS.timedJoin(thread, remainingNanos);
+            }
+            assertFalse(thread.isAlive(), "client thread still running: " + thread.getName());
         }
     }
 

@@ -5,7 +5,9 @@
 - Keep a client disconnected after `disconnect()` (debezium/dbz#3092). A client that was
   disconnected right after `connect(timeout)` returned, or from `LifecycleListener.onConnect`, could
   be left with a keepalive thread that reconnected it one keepalive interval later. The keepalive
-  thread now starts before `onConnect` is notified.
+  worker is now prepared before `onConnect` is notified, and starts monitoring only after the
+  callbacks and receive-loop setup succeed. If startup fails, the connection is closed and the
+  newly prepared worker is stopped. An existing worker keeps its reconnect retry policy.
 - Convert between bytes and strings as UTF-8 instead of the default charset of the JVM
   (debezium/dbz#3079). Up to Java 17 that charset follows the locale, so in a container without a
   UTF-8 locale, database, table and column names, SQL statements and JSON keys with non-ASCII
