@@ -30,19 +30,34 @@ public class DumpBinaryLogGtidCommand implements Command {
     private String binlogFilename;
     private long binlogPosition;
     private GtidSet gtidSet;
+    private final int binlogFlags;
 
     public DumpBinaryLogGtidCommand(long serverId, String binlogFilename, long binlogPosition, GtidSet gtidSet) {
+        this(serverId, binlogFilename, binlogPosition, gtidSet, 0);
+    }
+
+    /**
+     * @param serverId replica server id
+     * @param binlogFilename binary log filename
+     * @param binlogPosition position to start reading
+     * @param gtidSet GTIDs already processed
+     * @param binlogFlags two-byte MySQL dump flags
+     * @see DumpBinaryLogCommand#USE_HEARTBEAT_EVENT_V2
+     */
+    public DumpBinaryLogGtidCommand(long serverId, String binlogFilename, long binlogPosition, GtidSet gtidSet,
+            int binlogFlags) {
         this.serverId = serverId;
         this.binlogFilename = binlogFilename;
         this.binlogPosition = binlogPosition;
         this.gtidSet = gtidSet;
+        this.binlogFlags = binlogFlags;
     }
 
     @Override
     public byte[] toByteArray() throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         buffer.writeInteger(CommandType.BINLOG_DUMP_GTID.ordinal(), 1);
-        buffer.writeInteger(0, 2); // flag
+        buffer.writeInteger(binlogFlags, 2); // flag
         buffer.writeLong(this.serverId, 4);
         buffer.writeInteger(this.binlogFilename.length(), 4);
         buffer.writeString(this.binlogFilename);

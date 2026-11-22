@@ -24,32 +24,51 @@ import java.io.IOException;
  */
 public class DumpBinaryLogCommand implements Command {
 
+    /**
+     * MariaDB flag requesting annotated row events. The same bit has a different meaning on MySQL.
+     */
     public static final int BINLOG_SEND_ANNOTATE_ROWS_EVENT = 2;
+
+    /**
+     * MySQL flag requesting HEARTBEAT_LOG_EVENT_V2, supported since MySQL 8.0.28.
+     * On MariaDB this bit requests annotated row events instead; callers must select flags for the server dialect.
+     */
+    public static final int USE_HEARTBEAT_EVENT_V2 = 0x02;
+
     private long serverId;
     private String binlogFilename;
     private long binlogPosition;
-    private boolean sendAnnotateRowsEvent;
+    private final int binlogFlags;
 
     public DumpBinaryLogCommand(long serverId, String binlogFilename, long binlogPosition) {
+        this(serverId, binlogFilename, binlogPosition, 0);
+    }
+
+    /**
+     * @param serverId replica server id
+     * @param binlogFilename binary log filename
+     * @param binlogPosition position to start reading
+     * @param binlogFlags two-byte flags selected for the server dialect
+     */
+    public DumpBinaryLogCommand(long serverId, String binlogFilename, long binlogPosition, int binlogFlags) {
         this.serverId = serverId;
         this.binlogFilename = binlogFilename;
         this.binlogPosition = binlogPosition;
+        this.binlogFlags = binlogFlags;
     }
 
     public DumpBinaryLogCommand(long serverId, String binlogFilename, long binlogPosition, boolean sendAnnotateRowsEvent) {
-        this(serverId, binlogFilename, binlogPosition);
-        this.sendAnnotateRowsEvent = sendAnnotateRowsEvent;
+        this(serverId, binlogFilename, binlogPosition, sendAnnotateRowsEvent ? BINLOG_SEND_ANNOTATE_ROWS_EVENT : 0);
     }
 
     @Override
     public byte[] toByteArray() throws IOException {
+        if (binlogPosition < 0 || binlogPosition > 0xffffffffL) {
+            throw new BinlogPositionOutOfRangeException(binlogPosition);
+        }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         buffer.writeInteger(CommandType.BINLOG_DUMP.ordinal(), 1);
         buffer.writeLong(this.binlogPosition, 4);
-        int binlogFlags = 0;
-        if (sendAnnotateRowsEvent) {
-            binlogFlags |= BINLOG_SEND_ANNOTATE_ROWS_EVENT;
-        }
         buffer.writeInteger(binlogFlags, 2); // flag
         buffer.writeLong(this.serverId, 4);
         buffer.writeString(this.binlogFilename);

@@ -117,6 +117,28 @@ public class BinaryLogClientStatisticsTest {
         assertEquals(statistics.getSecondsBehindMaster(), 0L);
     }
 
+    @DataProvider(name = "heartbeatLag")
+    public Object[][] heartbeatLag() {
+        return new Object[][] {
+            {EventType.HEARTBEAT, 0L, 0L},
+            {EventType.HEARTBEAT_V2, 0L, 0L},
+            {EventType.HEARTBEAT, 1000L, 3L},
+            {EventType.HEARTBEAT_V2, 1000L, 3L}
+        };
+    }
+
+    @Test(dataProvider = "heartbeatLag")
+    public void testHeartbeatLag(EventType type, long timestamp, long expectedLag) {
+        BinaryLogClientStatistics statistics = new BinaryLogClientStatistics() {
+            @Override
+            protected long getCurrentTimeMillis() {
+                return 4000L;
+            }
+        };
+        statistics.onEvent(generateEvent(timestamp, type, 1, 104));
+        assertEquals(statistics.getSecondsBehindMaster(), expectedLag);
+    }
+
     @Test
     public void testOnEventDeserializationFailure() throws Exception {
         ControlledTimeStatistics statistics = new ControlledTimeStatistics();

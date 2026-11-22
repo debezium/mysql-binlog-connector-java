@@ -71,7 +71,8 @@ public class BinaryLogClientStatistics implements BinaryLogClientStatisticsMXBea
         if (timestamp == 0 || eventHeader == null) {
             return -1;
         }
-        if (eventHeader.getEventType() == EventType.HEARTBEAT && eventHeader.getTimestamp() == 0) {
+        if ((eventHeader.getEventType() == EventType.HEARTBEAT ||
+                eventHeader.getEventType() == EventType.HEARTBEAT_V2) && eventHeader.getTimestamp() == 0) {
             return 0;
         }
         return (timestamp - eventHeader.getTimestamp()) / 1000;

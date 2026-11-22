@@ -87,6 +87,52 @@ kick off from a specific filename or position, use `client.setBinlogFilename(fil
 > `client.connect()` is blocking (meaning that client will listen for events in the current thread).
 `client.connect(timeout)`, on the other hand, spawns a separate thread.
 
+#### MySQL binlog positions
+
+`BinaryLogClient` reconstructs 64-bit file positions before delivering events to listeners. The common
+event header contains only the low 32 bits of the next file position, so reading that field alone wraps
+at 4 GiB. The client combines it with event lengths and the full position in ROTATE events, preserving
+server position jumps when GTID filtering omits transactions. Synthetic events do not consume file bytes.
+
+On MySQL 8.0.28 and later, the client requests HEARTBEAT_V2 events. Their payload carries a full 64-bit
+position, allowing GTID resume to skip more than 4 GiB without losing the position's high bits. MySQL
+sends these position updates for skipped transactions even when periodic heartbeats are disabled.
+Listeners receive `EventType.HEARTBEAT_V2` and `HeartbeatV2EventData`. Applications that handle
+heartbeats must accept both versions. A positive full payload position is also reflected in the event
+header, including at exact multiples of 4 GiB. If both the payload and common header omit a position,
+the client retains its last known position.
+
+If a built-in or custom deserializer fails to decode a complete MySQL ROTATE or HEARTBEAT_V2 event,
+the client stops streaming and disables automatic reconnect for that connection. Skipping a ROTATE can
+associate subsequent rows with the wrong file. Skipping a heartbeat can lose the high bits of the
+position after a GTID-filtered gap. The client calls both `onEventDeserializationFailure` and
+`onCommunicationFailure`. After correcting the decoder or data, call `connect()` or `connect(timeout)`
+to resume. An I/O failure while receiving the event still follows the usual keepalive reconnect policy.
+
+The non-GTID `COM_BINLOG_DUMP` request has a four-byte unsigned position field. The client rejects
+file/position resume requests above 4,294,967,295 before sending the request. Use GTID-based resume
+for larger offsets. On MySQL versions before 8.0.28, heartbeat V1 cannot disambiguate a GTID-filtered
+gap spanning an entire 4 GiB range.
+MariaDB retains its existing server-provided positions and replication flags.
+
+See MySQL's [replication sender](https://github.com/mysql/mysql-server/blob/06bcb0eb0ad281e08dd2b4d81b99ad25491433e7/sql/rpl_binlog_sender.cc)
+and the [MySQL 8.0.28 release notes](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-28.html)
+for the heartbeat V2 protocol and its large-file position fix.
+
+The large-file regression test is opt-in and uses an isolated MySQL 8.0.28+ server. It creates a
+transaction containing 1100 server-generated 4 MiB BLOBs and compares streamed positions with SQL
+physical positions. Configure GTID ON, ROW/FULL logging, CRC32, transaction compression OFF and
+`max_binlog_cache_size=8589934592`, and allow at least 20 GiB of database disk space.
+
+```sh
+./mvnw verify -Dgpg.skip=true -Dit.test=BinaryLogClientLargePositionIntegrationTest \
+    -Dbinlog.large.enabled=true -Dbinlog.large.host=127.0.0.1 -Dbinlog.large.port=3306 \
+    -Dbinlog.large.username=root
+```
+
+The test retains its `dbz_large_positions` schema and binlogs so the same fixture can be reused
+with another client revision. Remove the isolated database instance after comparison.
+
 
 #### MariaDB
 

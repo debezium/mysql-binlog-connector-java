@@ -25,13 +25,54 @@ import java.io.IOException;
 public class EventDataDeserializationException extends IOException {
 
     private EventHeader eventHeader;
+    private enum FailurePhase {
+        UNSPECIFIED, READ, DECODE
+    }
+
+    private final FailurePhase positionAnchorFailurePhase;
 
     public EventDataDeserializationException(EventHeader eventHeader, Throwable cause) {
+        this(eventHeader, cause, FailurePhase.UNSPECIFIED);
+    }
+
+    EventDataDeserializationException(EventHeader eventHeader, Throwable cause, boolean positionAnchorDecodeFailure) {
+        this(eventHeader, cause, positionAnchorDecodeFailure ? FailurePhase.DECODE : FailurePhase.UNSPECIFIED);
+    }
+
+    private EventDataDeserializationException(EventHeader eventHeader, Throwable cause,
+            FailurePhase positionAnchorFailurePhase) {
         super("Failed to deserialize data of " + eventHeader, cause);
         this.eventHeader = eventHeader;
+        this.positionAnchorFailurePhase = positionAnchorFailurePhase;
+    }
+
+    static EventDataDeserializationException positionAnchorReadFailure(EventHeader eventHeader, IOException cause) {
+        return new EventDataDeserializationException(eventHeader, cause, FailurePhase.READ);
     }
 
     public EventHeader getEventHeader() {
         return eventHeader;
+    }
+
+    /**
+     * Whether a MySQL ROTATE or HEARTBEAT_V2 event declared an invalid body length or failed
+     * to decode after receiving its complete payload.
+     * Such a failure is local to the payload or decoder, even if its cause is an EOF/socket exception.
+     * A false result does not by itself establish that the failure came from the transport.
+     *
+     * @return true for an invalid position anchor header or a failure decoding its complete payload
+     */
+    public boolean isPositionAnchorDecodeFailure() {
+        return positionAnchorFailurePhase == FailurePhase.DECODE;
+    }
+
+    /**
+     * Whether receiving a position anchor's body or checksum failed before invoking its decoder.
+     * This identifies transport failures even when the cause is a timeout or another generic IOException.
+     *
+     * @return true for an I/O failure while receiving a position anchor
+     */
+    public boolean isPositionAnchorReadFailure() {
+        return positionAnchorFailurePhase == FailurePhase.READ;
     }
 }
