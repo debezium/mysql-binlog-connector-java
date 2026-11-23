@@ -23,4 +23,14 @@ public class MariadbGtidEventDataDeserializerTest {
         MariadbGtidEventData eventData = deserializer.deserialize(new ByteArrayInputStream(DATA));
         assertEquals(eventData.toString(), GTID_SET);
     }
+
+    @Test
+    public void deserializeUnsignedDomainId() throws IOException {
+        // sequence = 7404, domainId = 0xFFFFFFFF (uint4 max), flags = 12
+        byte[] data = {-20, 28, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, 12, 0, 0, 0, 0, 0, 0, 121};
+        MariadbGtidEventDataDeserializer deserializer = new MariadbGtidEventDataDeserializer();
+        MariadbGtidEventData eventData = deserializer.deserialize(new ByteArrayInputStream(data));
+        assertEquals(eventData.getDomainId(), 4294967295L);
+        assertEquals(eventData.getSequence(), 7404L);
+    }
 }

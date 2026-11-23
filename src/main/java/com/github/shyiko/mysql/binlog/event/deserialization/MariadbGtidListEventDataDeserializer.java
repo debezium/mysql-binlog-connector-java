@@ -28,8 +28,8 @@ public class MariadbGtidListEventDataDeserializer implements EventDataDeserializ
         long gtidLength = inputStream.readInteger(4);
         MariadbGtidSet mariaGTIDSet = new MariadbGtidSet();
         for (int i = 0; i < gtidLength; i++) {
-            long domainId = inputStream.readInteger(4);
-            long serverId = inputStream.readInteger(4);
+            long domainId = inputStream.readLong(4);
+            long serverId = inputStream.readLong(4);
             long sequence = inputStream.readLong(8);
             mariaGTIDSet.add(new MariadbGtidSet.MariaGtid(domainId, serverId, sequence));
         }
