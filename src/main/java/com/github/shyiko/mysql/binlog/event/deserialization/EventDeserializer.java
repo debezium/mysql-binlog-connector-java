@@ -25,6 +25,8 @@ import com.github.shyiko.mysql.binlog.event.TableMapEventData;
 import com.github.shyiko.mysql.binlog.event.TransactionPayloadEventData;
 import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 
+import java.io.EOFException;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.util.EnumSet;
 import java.util.IdentityHashMap;
@@ -132,6 +134,8 @@ public class EventDeserializer {
             new MariadbGtidListEventDataDeserializer());
         eventDataDeserializers.put(EventType.TRANSACTION_PAYLOAD,
                 new TransactionPayloadEventDataDeserializer());
+        eventDataDeserializers.put(EventType.HEARTBEAT_V2,
+                new HeartbeatV2EventDataDeserializer());
     }
 
     public void setEventDataDeserializer(EventType eventType, EventDataDeserializer eventDataDeserializer) {
@@ -342,6 +346,11 @@ public class EventDeserializer {
 
     private EventData deserializeEventData(ByteArrayInputStream inputStream, EventHeader eventHeader,
             EventDataDeserializer eventDataDeserializer) throws EventDataDeserializationException {
+        EventType eventType = eventHeader.getEventType();
+        if (inputStream instanceof MySqlReplicationInputStream &&
+                (eventType == EventType.ROTATE || eventType == EventType.HEARTBEAT_V2)) {
+            return deserializePositionAnchor(inputStream, eventHeader, eventDataDeserializer);
+        }
         int eventBodyLength = (int) eventHeader.getDataLength() - checksumLength;
         EventData eventData;
         try {
@@ -356,6 +365,72 @@ public class EventDeserializer {
             throw new EventDataDeserializationException(eventHeader, e);
         }
         return eventData;
+    }
+
+    private EventData deserializePositionAnchor(ByteArrayInputStream inputStream, EventHeader eventHeader,
+            EventDataDeserializer eventDataDeserializer) throws EventDataDeserializationException {
+        EventType eventType = eventHeader.getEventType();
+        long bodyLength = eventHeader.getDataLength() - checksumLength;
+        if (bodyLength < 0 || bodyLength > Integer.MAX_VALUE) {
+            throw new EventDataDeserializationException(eventHeader,
+                new IOException("Invalid " + eventType + " position anchor body length: " + bodyLength), true);
+        }
+        byte[] body;
+        try {
+            // Allocate incrementally from received bytes, not an untrusted declared length.
+            body = inputStream.readNBytes((int) bodyLength);
+            if (body.length != bodyLength) {
+                throw new EOFException("Incomplete " + eventType + " position anchor body");
+            }
+            if (inputStream.readNBytes(checksumLength).length != checksumLength) {
+                throw new EOFException("Incomplete " + eventType + " position anchor checksum");
+            }
+        } catch (IOException e) {
+            throw EventDataDeserializationException.positionAnchorReadFailure(eventHeader, e);
+        }
+        // The body and checksum are fully received. Even decoder EOF/socket exceptions are now local.
+        try {
+            return eventDataDeserializer.getClass() == EventDataWrapper.Deserializer.class ?
+                ((EventDataWrapper.Deserializer) eventDataDeserializer).deserialize(body) :
+                eventDataDeserializer.deserialize(new ByteArrayInputStream(body));
+        } catch (IOException e) {
+            throw new EventDataDeserializationException(eventHeader, e, true);
+        } catch (RuntimeException e) {
+            // Retain the checked error path used by consumers such as Debezium.
+            throw new EventDataDeserializationException(eventHeader,
+                new IOException("Failed to deserialize " + eventType + " position anchor", e), true);
+        }
+    }
+
+    /**
+     * Live MySQL replication input. On this stream the reader distinguishes I/O failures from
+     * decoder failures on the position events needed for reconnect. Files and MariaDB use the
+     * ordinary input stream and retain their existing exception behavior.
+     */
+    public static final class MySqlReplicationInputStream extends ByteArrayInputStream {
+
+        private final int startPosition;
+
+        public MySqlReplicationInputStream(ByteArrayInputStream channelInput) {
+            super(new FilterInputStream(channelInput) {
+                @Override
+                public int read() throws IOException {
+                    // ByteArrayInputStream.read() throws at EOF. Its peek() follows InputStream's EOF contract.
+                    return channelInput.peek() < 0 ? -1 : channelInput.read();
+                }
+            });
+            startPosition = channelInput.getPosition();
+        }
+
+        public MySqlReplicationInputStream(byte[] packet) {
+            super(packet);
+            startPosition = 0;
+        }
+
+        @Override
+        public int getPosition() {
+            return startPosition + super.getPosition();
+        }
     }
 
     public EventDataDeserializer getEventDataDeserializer(EventType eventType) {
@@ -464,7 +539,10 @@ public class EventDeserializer {
 
             @Override
             public EventData deserialize(ByteArrayInputStream inputStream) throws IOException {
-                byte[] bytes = inputStream.read(inputStream.available());
+                return deserialize(inputStream.read(inputStream.available()));
+            }
+
+            private EventData deserialize(byte[] bytes) throws IOException {
                 EventData internalEventData = internal.deserialize(new ByteArrayInputStream(bytes));
                 EventData externalEventData = external.deserialize(new ByteArrayInputStream(bytes));
                 return new EventDataWrapper(internalEventData, externalEventData);

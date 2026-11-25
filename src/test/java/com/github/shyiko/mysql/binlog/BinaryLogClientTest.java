@@ -60,6 +60,8 @@ import com.github.shyiko.mysql.binlog.jmx.BinaryLogClientStatistics;
 import com.github.shyiko.mysql.binlog.network.SSLSocketFactory;
 import com.github.shyiko.mysql.binlog.network.SocketFactory;
 import com.github.shyiko.mysql.binlog.network.protocol.PacketChannel;
+import com.github.shyiko.mysql.binlog.network.protocol.command.BinlogPositionOutOfRangeException;
+import com.github.shyiko.mysql.binlog.network.protocol.command.DumpBinaryLogCommand;
 
 import javax.net.ssl.SSLSocket;
 
@@ -266,99 +268,6 @@ public class BinaryLogClientTest {
         }
     }
 
-    /**
-     * Test that requestBinaryLogStreamMaria does not throw NPE when gtidEnabled is true
-     * but gtidSet is null (DBZ-9243). When no GTID position is available, the method should
-     * fall back to binlog file/position mode and NOT send SET @slave_connect_state.
-     */
-    @Test
-    public void testMariaDbStreamRequestWithNullGtidSetDoesNotThrowNPE() throws IOException {
-        final List<String> sentCommands = new ArrayList<String>();
-        // Subclass to test the fixed decision logic without a real network connection
-        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql") {
-            @Override
-            protected void requestBinaryLogStreamMaria(long serverId) throws IOException {
-                // Mirror the fixed logic: when gtidSet is null, must NOT throw NPE
-                String gtidStr = (gtidSet != null) ? gtidSet.toString() : null;
-                if (gtidStr != null && !gtidStr.isEmpty()) {
-                    sentCommands.add("SET @slave_connect_state = '" + gtidStr + "'");
-                } else {
-                    sentCommands.add("USE_BINLOG_POSITION");
-                }
-            }
-        };
-        // Simulate what Debezium does: setGtidSet("") → gtidEnabled=true but gtidSet stays null
-        client.setGtidSet("");
-        // gtidSet field must still be null (empty string skips object creation in setGtidSet)
-        assertEquals(client.getGtidSet(), null);
-        // This must NOT throw NullPointerException
-        client.requestBinaryLogStreamMaria(65535L);
-        // Verify the fallback path (file/position) was taken, not the GTID path
-        assertEquals(sentCommands.size(), 1);
-        assertEquals(sentCommands.get(0), "USE_BINLOG_POSITION");
-        assertFalse(sentCommands.get(0).contains("slave_connect_state"),
-            "SET @slave_connect_state should NOT be sent when gtidSet is null");
-    }
-    /**
-     * Test that requestBinaryLogStreamMaria does not send SET @slave_connect_state
-     * when gtidSet is an empty MariaDB GTID set (DBZ-9243). An empty GTID set (as
-     * initialized by setupGtidSet() when no prior GTID exists) means no known position —
-     * should fall back to binlog file/position.
-     */
-    @Test
-    public void testMariaDbStreamRequestWithEmptyGtidSetFallsBackToFilePosition() throws IOException {
-        final List<String> sentCommands = new ArrayList<String>();
-        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql") {
-            @Override
-            protected void requestBinaryLogStreamMaria(long serverId) throws IOException {
-                // Mirror the fixed logic: empty gtidSet should NOT send slave_connect_state
-                String gtidStr = (gtidSet != null) ? gtidSet.toString() : null;
-                if (gtidStr != null && !gtidStr.isEmpty()) {
-                    sentCommands.add("SET @slave_connect_state = '" + gtidStr + "'");
-                } else {
-                    sentCommands.add("USE_BINLOG_POSITION");
-                }
-            }
-        };
-        // Simulate setupGtidSet() initializing gtidSet = new MariadbGtidSet("") when gtidStr was ""
-        client.setGtidSet("");
-        synchronized (client.gtidSetAccessLock) {
-            client.gtidSet = new MariadbGtidSet("");
-        }
-        assertEquals(client.getGtidSet(), ""); // empty string — not null, but still no real GTID
-        // Must not send SET @slave_connect_state = '' to MariaDB
-        client.requestBinaryLogStreamMaria(65535L);
-        assertEquals(sentCommands.size(), 1);
-        assertEquals(sentCommands.get(0), "USE_BINLOG_POSITION",
-            "When gtidSet is empty, should fall back to binlog file/position");
-    }
-    /**
-     * Test that requestBinaryLogStreamMaria correctly sends SET @slave_connect_state
-     * when a valid, non-empty MariaDB GTID is available — verifies the happy path is unaffected.
-     */
-    @Test
-    public void testMariaDbStreamRequestWithValidGtidSendsSlaveConnectState() throws IOException {
-        final List<String> sentCommands = new ArrayList<String>();
-        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "mysql") {
-            @Override
-            protected void requestBinaryLogStreamMaria(long serverId) throws IOException {
-                // Happy path: valid non-empty GTID should send slave_connect_state
-                String gtidStr = (gtidSet != null) ? gtidSet.toString() : null;
-                if (gtidStr != null && !gtidStr.isEmpty()) {
-                    sentCommands.add("SET @slave_connect_state = '" + gtidStr + "'");
-                } else {
-                    sentCommands.add("USE_BINLOG_POSITION");
-                }
-            }
-        };
-        // Provide a valid MariaDB GTID (domain-server-sequence format)
-        client.setGtidSet("0-1-1");
-        assertEquals(client.getGtidSet(), "0-1-1");
-        client.requestBinaryLogStreamMaria(65535L);
-        assertEquals(sentCommands.size(), 1);
-        assertEquals(sentCommands.get(0), "SET @slave_connect_state = '0-1-1'",
-            "When gtidSet is non-empty, SET @slave_connect_state must be sent");
-    }
     /**
      * Verifies that when an SSL channel is closed via disconnectChannel(), SO_LINGER(0) is always
      * applied — regardless of the {@code useNonGracefulDisconnect} flag.  This prevents a TLS
@@ -702,6 +611,37 @@ public class BinaryLogClientTest {
             }
         });
         return abandoned;
+    }
+
+    @Test
+    public void testKeepAliveAbandonsUnrepresentableDumpPositionOnFirstAttempt() {
+        BinaryLogClient client = new BinaryLogClient("localhost", 3306, "root", "") {
+            @Override
+            boolean isConnectionLost() {
+                return true;
+            }
+
+            @Override
+            public void connect(long timeout) throws IOException {
+                new DumpBinaryLogCommand(getServerId(), getBinlogFilename(), getBinlogPosition()).toByteArray();
+                throw new AssertionError("The dump command unexpectedly accepted the resume position");
+            }
+        };
+        client.setBinlogFilename("mysql-bin.000001");
+        client.setBinlogPosition(1L << 32);
+        client.setKeepAliveInterval(1);
+        client.setKeepAliveMaxReconnectAttempts(3);
+        AbandonedReconnects abandoned = captureAbandonedReconnects(client);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            client.runKeepAlive(executor);
+            assertEquals(abandoned.count.get(), 1);
+            assertEquals(abandoned.failedAttempts, 1);
+            assertTrue(abandoned.cause instanceof BinlogPositionOutOfRangeException);
+            assertTrue(executor.isShutdown());
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     /**

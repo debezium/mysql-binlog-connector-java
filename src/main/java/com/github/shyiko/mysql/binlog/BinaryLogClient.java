@@ -32,7 +32,9 @@ import com.github.shyiko.mysql.binlog.event.deserialization.EventDataDeserializa
 import com.github.shyiko.mysql.binlog.event.deserialization.EventDataDeserializer;
 import com.github.shyiko.mysql.binlog.event.deserialization.EventDeserializer;
 import com.github.shyiko.mysql.binlog.event.deserialization.EventDeserializer.EventDataWrapper;
+import com.github.shyiko.mysql.binlog.event.deserialization.EventDeserializer.MySqlReplicationInputStream;
 import com.github.shyiko.mysql.binlog.event.deserialization.GtidEventDataDeserializer;
+import com.github.shyiko.mysql.binlog.event.deserialization.HeartbeatV2EventDataDeserializer;
 import com.github.shyiko.mysql.binlog.event.deserialization.MariadbGtidEventDataDeserializer;
 import com.github.shyiko.mysql.binlog.event.deserialization.MariadbGtidListEventDataDeserializer;
 import com.github.shyiko.mysql.binlog.event.deserialization.QueryEventDataDeserializer;
@@ -54,6 +56,7 @@ import com.github.shyiko.mysql.binlog.network.protocol.GreetingPacket;
 import com.github.shyiko.mysql.binlog.network.protocol.Packet;
 import com.github.shyiko.mysql.binlog.network.protocol.PacketChannel;
 import com.github.shyiko.mysql.binlog.network.protocol.ResultSetRowPacket;
+import com.github.shyiko.mysql.binlog.network.protocol.command.BinlogPositionOutOfRangeException;
 import com.github.shyiko.mysql.binlog.network.protocol.command.Command;
 import com.github.shyiko.mysql.binlog.network.protocol.command.DumpBinaryLogCommand;
 import com.github.shyiko.mysql.binlog.network.protocol.command.DumpBinaryLogGtidCommand;
@@ -189,7 +192,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     private volatile ExecutorService keepAliveThreadExecutor;
     private volatile Thread keepAliveThread;
 
-    private final Lock connectLock = new ReentrantLock();
+    private final ReentrantLock connectLock = new ReentrantLock();
     private final Lock keepAliveThreadExecutorLock = new ReentrantLock();
     private boolean useSendAnnotateRowsEvent;
 
@@ -484,7 +487,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
     /**
      * @return number of consecutive failed reconnect attempts after which the "keep alive" thread gives up,
-     * 0 (the default) if it retries indefinitely.
+     * 0 (the default) if it retries transient failures indefinitely.
      * @see #setKeepAliveMaxReconnectAttempts(int)
      */
     public int getKeepAliveMaxReconnectAttempts() {
@@ -494,7 +497,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     /**
      * Bound the number of consecutive attempts the "keep alive" thread makes to restore a lost connection.
      * <p>
-     * By default the keepalive thread retries indefinitely and reports nothing but a log message, so a
+     * By default the keepalive thread retries transient failures indefinitely and reports nothing but a log message, so a
      * connection that can never be restored leaves the client silently idle: no events are delivered, yet
      * no callback fires either, and the application has no way of telling this apart from an idle server
      * (debezium/dbz#1474).
@@ -503,10 +506,11 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
      * reports the last failure through
      * {@link LifecycleListener#onReconnectAbandoned(BinaryLogClient, Throwable, int)}, allowing the
      * application to fail fast and re-create the client. The counter is reset by every successful
-     * reconnect and by every check that finds the connection healthy.
+     * reconnect and by every check that finds the connection healthy. A resume position outside the range
+     * of COM_BINLOG_DUMP causes the keepalive thread to give up immediately, regardless of this limit.
      *
      * @param keepAliveMaxReconnectAttempts maximum number of consecutive failed reconnect attempts,
-     * 0 to retry indefinitely.
+     * 0 to retry transient failures indefinitely.
      * @see #getKeepAliveMaxReconnectAttempts()
      */
     public void setKeepAliveMaxReconnectAttempts(int keepAliveMaxReconnectAttempts) {
@@ -773,6 +777,9 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 }
                 ensureEventDataDeserializer(EventType.ROTATE, RotateEventDataDeserializer.class);
                 ensureEventDataDeserializer(EventType.QUERY, QueryEventDataDeserializer.class);
+                if (!databaseVersion.isMariaDb()) {
+                    ensureEventDataDeserializer(EventType.HEARTBEAT_V2, HeartbeatV2EventDataDeserializer.class);
+                }
                 synchronized (gtidSetAccessLock) {
                     if (this.gtidEnabled) {
                         ensureGtidEventDataDeserializer();
@@ -971,16 +978,19 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
     private void requestBinaryLogStreamMysql(long serverId) throws IOException {
         Command dumpBinaryLogCommand;
+        // MariaDB uses this bit for annotated rows; negotiate it only on supporting MySQL versions.
+        int binlogFlags = databaseVersion.isGreaterThanOrEqualTo(8, 0, 28) ?
+            DumpBinaryLogCommand.USE_HEARTBEAT_EVENT_V2 : 0;
         synchronized (gtidSetAccessLock) {
             if (this.gtidEnabled) {
                 logger.info("Requesting streaming from position filename: " + binlogFilename + ", position: " + binlogPosition + ", GTID set: " + gtidSet);
                 dumpBinaryLogCommand = new DumpBinaryLogGtidCommand(serverId,
                     useBinlogFilenamePositionInGtidMode ? binlogFilename : "",
                     useBinlogFilenamePositionInGtidMode ? binlogPosition : 4,
-                    gtidSet);
+                    gtidSet, binlogFlags);
             } else {
                 logger.info("Requesting streaming from position filename: " + binlogFilename + ", position: " + binlogPosition);
-                dumpBinaryLogCommand = new DumpBinaryLogCommand(serverId, binlogFilename, binlogPosition);
+                dumpBinaryLogCommand = new DumpBinaryLogCommand(serverId, binlogFilename, binlogPosition, binlogFlags);
             }
         }
         channel.write(dumpBinaryLogCommand);
@@ -1146,12 +1156,19 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 logger.info("Keepalive: Trying to restore lost connection to " + hostname + ":" + port);
                 try {
                     terminateConnect(useNonGracefulDisconnect);
+                    if (threadExecutor.isShutdown()) {
+                        return;
+                    }
                     rewindToTransactionStartIfNeeded();
                     connect(connectTimeout);
                     failedReconnects = 0;
                 } catch (Exception ce) {
+                    if (threadExecutor.isShutdown()) {
+                        return;
+                    }
                     failedReconnects++;
-                    if (keepAliveMaxReconnectAttempts > 0 && failedReconnects >= keepAliveMaxReconnectAttempts) {
+                    if (ce instanceof BinlogPositionOutOfRangeException ||
+                            (keepAliveMaxReconnectAttempts > 0 && failedReconnects >= keepAliveMaxReconnectAttempts)) {
                         logger.log(Level.SEVERE, "keepalive: Failed to restore connection to " + hostname + ":" +
                             port + " after " + failedReconnects + " attempt(s), giving up", ce);
                         // stop before notifying: the listener is free to call disconnect() and must not find
@@ -1166,6 +1183,9 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                         "). Next attempt in " + keepAliveInterval + "ms", ce);
                 }
             } catch (Throwable t) {
+                if (threadExecutor.isShutdown()) {
+                    return;
+                }
                 // Anything escaping the loop body kills the keepalive thread without a trace - the executor
                 // parks it in a Future nobody ever reads - leaving a client that reports itself connected
                 // with nothing left to reconnect it (debezium/dbz#1474). The outcome is the same as running
@@ -1329,8 +1349,15 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
 
     // visible for testing
     void listenForEventPackets() throws IOException {
+        // MariaDB has different artificial-event and zero-position semantics (including InnoDB binlogs).
+        BinlogPositionTracker positionTracker = Boolean.TRUE.equals(getMariaDB()) ?
+            null : new BinlogPositionTracker(binlogPosition);
         ByteArrayInputStream inputStream = channel.getInputStream();
+        if (positionTracker != null) {
+            inputStream = new MySqlReplicationInputStream(inputStream);
+        }
         boolean completeShutdown = false;
+        boolean terminalPositionFailureAccepted = false;
         try {
             while (inputStream.peek() != -1) {
                 int packetLength = inputStream.readInteger(3);
@@ -1349,20 +1376,59 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 }
                 Event event;
                 try {
-                    event = eventDeserializer.nextEvent(packetLength == MAX_PACKET_LENGTH ?
-                        new ByteArrayInputStream(readPacketSplitInChunks(inputStream, packetLength - 1)) :
-                        inputStream);
+                    ByteArrayInputStream eventInput = inputStream;
+                    if (packetLength == MAX_PACKET_LENGTH) {
+                        byte[] packet = readPacketSplitInChunks(inputStream, packetLength - 1);
+                        eventInput = positionTracker == null ? new ByteArrayInputStream(packet) : new MySqlReplicationInputStream(packet);
+                    }
+                    event = eventDeserializer.nextEvent(eventInput);
                     if (event == null) {
                         throw new EOFException();
                     }
                 } catch (Exception e) {
                     Throwable cause = e instanceof EventDataDeserializationException ? e.getCause() : e;
-                    if (cause instanceof EOFException || cause instanceof SocketException) {
+                    EventDataDeserializationException failure = e instanceof EventDataDeserializationException dataFailure ?
+                        dataFailure : null;
+                    EventHeader failedHeader = failure != null ? failure.getEventHeader() : null;
+                    EventType failedType = failedHeader != null ? failedHeader.getEventType() : null;
+                    boolean positionAnchorFailed = positionTracker != null &&
+                        (failedType == EventType.ROTATE || failedType == EventType.HEARTBEAT_V2);
+                    boolean completeAnchorDecodeFailure = positionAnchorFailed && failure.isPositionAnchorDecodeFailure();
+                    boolean transportAnchorFailure = positionAnchorFailed && failure.isPositionAnchorReadFailure();
+                    if (transportAnchorFailure || (!completeAnchorDecodeFailure &&
+                        (cause instanceof EOFException || cause instanceof SocketException))) {
+                        throw e;
+                    }
+                    if (positionTracker != null && failedHeader != null) {
+                        if (positionAnchorFailed) {
+                            ExecutorService executor = keepAliveThreadExecutor;
+                            if (!isConnected() && (executor == null || executor.isShutdown())) {
+                                // An explicit disconnect already canceled this reader and its worker.
+                                throw e;
+                            }
+                            terminalPositionFailureAccepted = true;
+                            // Do not await a worker that may be waiting for this reader's connectLock.
+                            if (executor != null) {
+                                shutdownKeepAliveExecutor(executor);
+                            }
+                        } else {
+                            positionTracker.normalizeHeaderPosition(failedHeader);
+                        }
+                    }
+                    if (terminalPositionFailureAccepted) {
+                        // Report the same terminal error to every observer, including onCommunicationFailure.
+                        for (LifecycleListener listener : lifecycleListeners) {
+                            try {
+                                listener.onEventDeserializationFailure(this, e);
+                            } catch (Exception observerFailure) {
+                                logger.log(Level.WARNING, observerFailure, () -> listener + " choked on " + e);
+                            }
+                        }
                         throw e;
                     }
                     if (isConnected()) {
-                        for (LifecycleListener lifecycleListener : lifecycleListeners) {
-                            lifecycleListener.onEventDeserializationFailure(this, e);
+                        for (LifecycleListener listener : lifecycleListeners) {
+                            listener.onEventDeserializationFailure(this, e);
                         }
                     }
                     continue;
@@ -1370,15 +1436,18 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
                 if (isConnected()) {
                     eventLastSeenNanos = getCurrentTimeNanos();
                     eventSeenSinceConnect = true;
+                    boolean updatePosition = positionTracker == null || positionTracker.normalizeEventPosition(event);
                     updateNonGtidTransactionStateBeforeEvent(event);
                     updateGtidSet(event);
                     notifyEventListeners(event);
-                    updateClientBinlogFilenameAndPosition(event);
+                    if (updatePosition) {
+                        updateClientBinlogFilenameAndPosition(event, positionTracker);
+                    }
                     updateNonGtidTransactionStateAfterEvent(event);
                 }
             }
         } catch (Exception e) {
-            if (isConnected()) {
+            if (isConnected() || terminalPositionFailureAccepted) {
                 notifyCommunicationFailure(e);
             }
         } catch (Error e) {
@@ -1386,7 +1455,7 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
             // the catch above and would terminate the reader thread with nothing but onDisconnect: the
             // application cannot tell a fatal read failure apart from an orderly shutdown and keeps
             // believing streaming is in progress (debezium/dbz#1474). Report it, then let it propagate.
-            if (isConnected()) {
+            if (isConnected() || terminalPositionFailureAccepted) {
                 notifyCommunicationFailure(new IOException("Binary log reader terminated abnormally", e));
             }
             throw e;
@@ -1413,22 +1482,30 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         return result;
     }
 
-    private void updateClientBinlogFilenameAndPosition(Event event) {
+    private void updateClientBinlogFilenameAndPosition(Event event, BinlogPositionTracker positionTracker) {
         EventHeader eventHeader = event.getHeader();
         EventType eventType = eventHeader.getEventType();
         if (eventType == EventType.ROTATE) {
             RotateEventData rotateEventData = (RotateEventData) EventDataWrapper.internal(event.getData());
             binlogFilename = rotateEventData.getBinlogFilename();
             binlogPosition = rotateEventData.getBinlogPosition();
-        } else
-        // do not update binlogPosition on TABLE_MAP so that in case of reconnect (using a different instance of
-        // client) table mapping cache could be reconstructed before hitting row mutation event
-        if (eventType != EventType.TABLE_MAP && eventHeader instanceof EventHeaderV4) {
-            EventHeaderV4 trackableEventHeader = (EventHeaderV4) eventHeader;
-            long nextBinlogPosition = trackableEventHeader.getNextPosition();
-            if (nextBinlogPosition > 0) {
-                binlogPosition = nextBinlogPosition;
-            }
+            return;
+        }
+        if (eventType == EventType.TABLE_MAP) {
+            // On reconnect a new client must replay the table map before the following row event.
+            return;
+        }
+        long nextPosition;
+        if (positionTracker != null) {
+            // MySQL positions are resolved before event listeners can modify the header.
+            nextPosition = positionTracker.getPhysicalPosition();
+        } else if (eventHeader instanceof EventHeaderV4 header) {
+            nextPosition = header.getNextPosition();
+        } else {
+            return;
+        }
+        if (nextPosition > 0) {
+            binlogPosition = nextPosition;
         }
     }
 
@@ -1741,10 +1818,10 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
     }
 
     private void awaitKeepAliveThreadTermination(ExecutorService executor) {
-        if (Thread.currentThread() == keepAliveThread) {
-            // disconnect() was called from the keepalive thread itself, typically by a LifecycleListener
-            // reacting to a failure reported from there; awaiting our own termination would deadlock.
-            logger.fine("disconnect() called from the keepalive thread, not awaiting its termination");
+        if (Thread.currentThread() == keepAliveThread || connectLock.isHeldByCurrentThread()) {
+            // A reader callback can disconnect while a canceled worker still needs connectLock.
+            // connect() awaits its prepared executor after releasing that lock instead.
+            logger.fine("Not awaiting keepalive termination from its worker or while holding the reader lock");
             return;
         }
         while (!awaitTerminationInterruptibly(executor,
@@ -1838,8 +1915,11 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         void onCommunicationFailure(BinaryLogClient client, Exception ex);
 
         /**
-         * Called in case of failed event deserialization. Note this type of error does NOT cause client to
-         * disconnect. If you wish to stop receiving events you'll need to fire client.disconnect() manually.
+         * Called in case of failed event deserialization. Most events are skipped and streaming continues.
+         * A MySQL ROTATE or HEARTBEAT_V2 decoder failure after receiving the complete payload also stops
+         * streaming and automatic reconnect, because subsequent positions cannot be trusted. Fix the
+         * decoder or data before explicitly reconnecting. Transport I/O failures instead follow
+         * the communication-failure and keepalive reconnect path.
 		 * @param client the client that failed event deserialization
 		 * @param ex The exception that triggered the failutre
          */
@@ -1852,10 +1932,10 @@ public class BinaryLogClient implements BinaryLogClientMXBean {
         void onDisconnect(BinaryLogClient client);
 
         /**
-         * Called once the "keep alive" thread has stopped trying to restore the connection, either because
-         * {@link BinaryLogClient#setKeepAliveMaxReconnectAttempts(int)} consecutive attempts have failed or
-         * because the thread itself terminated on an unexpected failure. No further reconnect will be
-         * attempted, so unless the application reconnects the client no more events will be delivered.
+         * Called once the "keep alive" thread has stopped trying to restore the connection because the
+         * resume position cannot be encoded, {@link BinaryLogClient#setKeepAliveMaxReconnectAttempts(int)}
+         * consecutive attempts have failed, or the thread itself terminated on an unexpected failure.
+         * No further reconnect will be attempted, so unless the application reconnects the client no more events will be delivered.
          * <p>
          * This is reported after the {@link #onDisconnect(BinaryLogClient)} of the connection that was
          * lost - the client is only known to have given up once that connection is long gone - which is
